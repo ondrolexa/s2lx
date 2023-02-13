@@ -1,29 +1,58 @@
-import sys
-import re
-from pathlib import Path
-import numbers
-import json
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib import colors
-from matplotlib import path
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-import matplotlib.patches as mpatches
-from matplotlib.widgets import RectangleSelector
+# -*- coding: utf-8 -*-
 
-from osgeo import gdal
-from osgeo import gdal_array
-from shapely import wkt, ops, geometry
+import json
+import numbers
+import re
+import sys
+from pathlib import Path
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
 import pyproj
+from matplotlib import colors, path
+from matplotlib.widgets import RectangleSelector
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from osgeo import gdal, gdal_array
+from shapely import geometry, ops, wkt
 from sklearn import decomposition
-from sklearn.cluster import KMeans, AgglomerativeClustering
-from sklearn.preprocessing import StandardScaler, RobustScaler, PowerTransformer
+from sklearn.cluster import AgglomerativeClustering, KMeans
+from sklearn.preprocessing import PowerTransformer, RobustScaler, StandardScaler
 
 
 class SAFE:
-    """Class to manipulate Sentinel-2 product"""
+    """Class to manipulate Sentinel-2 product
+
+    The SAFE format has been designed to act as a common format for
+    archiving and conveying data within ESA Earth Observation archiving
+    facilities. The SAFE format wraps a folder containing image data in
+    a binary data format and product metadata in XML.
+
+    The Level-2A prototype product is an orthorectified product providing
+    Bottom-Of-Atmosphere (BOA) reflectances, and basic pixel classification
+    (including classes for different types of cloud). The generation of
+    this prototype product is carried out by the User from Level-1C products.
+
+    The Level-2A image data product uses the same tiling, encoding
+    and filing structure as Level-1C.
+
+    Attributes:
+        datasets (dict): Dictionary containing information abou available sub-
+            datasets. Commonly "10m", "20m", "60m" and "TCI"
+        meta (dict): Dictionary with SAFE format metadata
+
+    """
 
     def __init__(self, xml):
+        """Open SAFE format dataset
+
+        The Sentinel-2 Level-2A and Level-1C are supported. The data could be
+        downloaded from The Copernicus Open Access Hub.
+
+        Args:
+            xml (str): path to MTD_MSIL2A.xml file in root of SAFE folder.
+
+        """
         xml = Path(xml)
         if xml.is_file():
             ds = gdal.Open(str(xml), gdal.GA_ReadOnly)
@@ -43,7 +72,13 @@ class SAFE:
                     mtd["n"] = n + 1
                     bands[name] = mtd
                 self.datasets[dsname] = dict(
-                    xml=xmlfile, crs=crs, desc=desc, bands=bands, meta=meta, transform=sds.GetGeoTransform(), projection=sds.GetProjection()
+                    xml=xmlfile,
+                    crs=crs,
+                    desc=desc,
+                    bands=bands,
+                    meta=meta,
+                    transform=sds.GetGeoTransform(),
+                    projection=sds.GetProjection(),
                 )
                 sds = None
             ds = None
@@ -51,46 +86,212 @@ class SAFE:
             print("Error: No valid filename")
 
     def __repr__(self):
-        txt = f'{self.meta["DATATAKE_1_SPACECRAFT_NAME"]} {self.meta["PRODUCT_TYPE"]} {self.meta["PROCESSING_LEVEL"]}\n'
+        txt = f'{self.meta["DATATAKE_1_SPACECRAFT_NAME"]} '
+        txt += f'{self.meta["PRODUCT_TYPE"]} '
+        txt += f'{self.meta["PROCESSING_LEVEL"]}\n'
         txt += f'Sensing date {self.meta["DATATAKE_1_DATATAKE_SENSING_START"]}\n'
         for d in self.datasets:
-            txt += (
-                f'Dataset {d} bands: {sorted(list(self.datasets[d]["bands"].keys()))}\n'
-            )
+            txt += f'Dataset {d} bands: {sorted(list(self.datasets[d]["bands"].keys()))}\n'
         return txt
 
     def preview(self, **kwargs):
+        """Show the scene TCI image
+
+        Keyword Args:
+            figsize (tuple): matplotlib Figure size
+
+        """
         sds = gdal.Open(self.datasets["TCI"]["xml"])
         tci = np.dstack(
             (
-                sds.GetRasterBand(
-                    self.datasets["TCI"]["bands"]["B4"]["n"]
-                ).ReadAsArray(),
-                sds.GetRasterBand(
-                    self.datasets["TCI"]["bands"]["B3"]["n"]
-                ).ReadAsArray(),
-                sds.GetRasterBand(
-                    self.datasets["TCI"]["bands"]["B2"]["n"]
-                ).ReadAsArray(),
+                sds.GetRasterBand(self.datasets["TCI"]["bands"]["B4"]["n"]).ReadAsArray(),
+                sds.GetRasterBand(self.datasets["TCI"]["bands"]["B3"]["n"]).ReadAsArray(),
+                sds.GetRasterBand(self.datasets["TCI"]["bands"]["B2"]["n"]).ReadAsArray(),
             )
         )
         figsize = kwargs.get("figsize", plt.rcParams["figure.figsize"])
         # plot
         f, ax = plt.subplots(figsize=figsize)
         ax.imshow(tci)
-        ax.set_title(self.meta['PRODUCT_URI'])
+        ax.set_title(self.meta["PRODUCT_URI"])
         ax.set_aspect(1)
         f.tight_layout()
         plt.show()
 
+    @property
+    def crs(self):
+        """pyproj.CRS: coordinate reference system of scene"""
+        return pyproj.CRS(self.datasets["20m"]["crs"])
+
     def get(self, dataset, band):
+        """Get band as numpy array
+
+        Args:
+            dataset (str): matplotlib Figure size
+            band (str): matplotlib Figure size
+
+        Returns:
+            Tuple of band numpy array and metadata dict
+
+        """
         if dataset in self.datasets:
             if band in self.datasets[dataset]["bands"]:
                 sds = gdal.Open(self.datasets[dataset]["xml"])
                 meta = self.datasets[dataset]["bands"][band]
                 return sds.GetRasterBand(meta["n"]).ReadAsArray(), meta
 
-    def gclip(self, name="Clip", band="B12"):
+    def clip_geojson(self, geojson, res=20, name="Clip", include8a=False):
+        """Clip scene by polygon stored in GeoJSON file
+
+        Clip all bands in scene by rectangle defined as bounds of polygon
+        stored in GeoJSON file. All bands in resulting collection have same
+        resolution. For res=20, the '10m' dataset bands are downsampled,
+        while for res=10, the bands of '20m' dataset are upsampled.
+
+        Note:
+            This method assume that CRS of GeoJSON and scene is identical
+
+        Args:
+            geojson (str): filename of GeoJSON with polygon feature
+
+        Keyword Args:
+            res (int): resolution of clipped bands. Default 20
+            name (str): name of collection. Default is 'Clip'
+            include8a (bool): whether to include B8A band. Dafault False
+
+        Returns:
+            `s2lx.S2` collection
+
+        """
+        with open(geojson) as f:
+            features = json.load(f)["features"]
+        bnds = geometry.shape(features[0]["geometry"]).buffer(0).bounds
+        return self.clip(
+            (bnds[0], bnds[3], bnds[2], bnds[1]),
+            res=res,
+            name=name,
+            include8a=include8a,
+        )
+
+    def clip(self, projWin, res=20, name="Clip", include8a=False):
+        """Clip scene by coordinates
+
+        Clip all bands in scene by rectangle defined by subwindow. All bands
+        in resulting collection have same resolution. For res=20, the '10m'
+        dataset bands are downsampled, while for res=10, the bands of '20m'
+        dataset are upsampled.
+
+        Note:
+            This method assume that coordinates of subwindow are given in
+            CRS of scene
+
+        Args:
+            projWin (tuple): subwindow to clip (ulx, uly, lrx, lry)
+
+        Keyword Args:
+            res (int): resolution of clipped bands. Default 20
+            name (str): name of collection. Default is 'Clip'
+            include8a (bool): whether to include B8A band. Dafault False
+
+        Returns:
+            `s2lx.S2` collection
+
+        """
+        if projWin is not None:
+            wgs84 = pyproj.CRS("EPSG:4326")
+            reproject = pyproj.Transformer.from_crs(wgs84, self.crs, always_xy=True).transform
+            # safe footprint
+            footprint = ops.transform(reproject, wkt.loads(self.meta["FOOTPRINT"])).buffer(-200)
+            # prepare mask
+            cg = np.arange(projWin[0] + res // 2, projWin[2], res)
+            rg = np.arange(projWin[1] - res // 2, projWin[3], -res)
+            xx, yy = np.meshgrid(cg, rg)
+            footpath = path.Path(np.array(footprint.exterior.xy).T)
+            mask = np.invert(
+                np.reshape(
+                    footpath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
+                    xx.shape,
+                )
+            )
+            # go
+            meta = self.meta.copy()
+            rasters = []
+            # 20m
+            sds = gdal.Translate(
+                "/vsimem/in_memory_output.tif",
+                gdal.Open(self.datasets["20m"]["xml"]),
+                projWin=projWin,
+                xRes=res,
+                yRes=res,
+                resampleAlg=gdal.GRA_Average,
+            )
+            for band in ["B5", "B6", "B7", "B8A", "B11", "B12"]:
+                bmeta = self.datasets["20m"]["bands"][band].copy()
+                rb = sds.GetRasterBand(bmeta.pop("n"))
+                vals = rb.ReadAsArray().astype(np.int16)
+                if band == "B8A":
+                    if include8a:
+                        rasters.append(
+                            Band(
+                                "a8",
+                                np.ma.masked_array(vals, mask),
+                                sds.GetGeoTransform(),
+                                sds.GetProjection(),
+                            )
+                        )
+                        meta["a8"] = bmeta
+                else:
+                    rasters.append(
+                        Band(
+                            band.lower(),
+                            np.ma.masked_array(vals, mask),
+                            sds.GetGeoTransform(),
+                            sds.GetProjection(),
+                        )
+                    )
+                    meta[band.lower()] = bmeta
+            sds = gdal.Translate(
+                "/vsimem/in_memory_output.tif",
+                gdal.Open(self.datasets["10m"]["xml"]),
+                projWin=projWin,
+                xRes=res,
+                yRes=res,
+                resampleAlg=gdal.GRA_Average,
+            )
+            for band in ["B4", "B3", "B2", "B8"]:
+                bmeta = self.datasets["10m"]["bands"][band].copy()
+                rb = sds.GetRasterBand(bmeta.pop("n"))
+                vals = rb.ReadAsArray().astype(np.int16)
+                rasters.append(
+                    Band(
+                        band.lower(),
+                        np.ma.masked_array(vals, mask),
+                        sds.GetGeoTransform(),
+                        sds.GetProjection(),
+                    )
+                )
+                meta[band.lower()] = bmeta
+            return S2(*rasters, meta=meta, name=name)
+
+    def gclip(self, name="Clip", include8a=False, band="B12"):
+        """Quick clip by rectangular selection
+
+        Clip all bands in scene by rectangular selection drawn by mouse.
+        All bands in resulting collection have 20m resolution and '10m'
+        dataset bands are downsampled.
+
+        Note:
+            Draw and modify selection by mouse. Clip by keypress enter.
+
+        Keyword Args:
+            name (str): name of collection. Default is 'Clip'
+            include8a (bool): whether to include B8A band. Dafault False
+
+        Returns:
+            `s2lx.S2` collection
+
+        """
+
         def onselect_function(eclick, erelease):
             pass
 
@@ -132,68 +333,261 @@ class SAFE:
             lrx = ulx + xs * sds.RasterXSize
             lry = uly + ys * sds.RasterYSize
             print(f"projWin=[{ulx}, {uly}, {lrx}, {lry}]")
-            return self.clip(projWin=(ulx, uly, lrx, lry), name=name)
+            return self.clip((ulx, uly, lrx, lry), res=20, name=name, include8a=False)
 
-    def clip_geojson(self, geojson, name="Clip", include8a=False):
-        with open(geojson) as f:
-            features = json.load(f)["features"]
-        bnds = geometry.shape(features[0]["geometry"]).buffer(0).bounds
-        return self.clip(projWin=(bnds[0], bnds[3], bnds[2], bnds[1]), name=name, include8a=include8a)
+    def warp_geojson(self, geojson, dstcrs=None, res=20, name="Clip", include8a=False, crop=False):
+        """Reproject and clip scene by polygon stored in GeoJSON file
 
-    def clip(self, res=20, projWin=None, name="Clip", include8a=False):
-        if projWin is not None:
-            wgs84 = pyproj.CRS('EPSG:4326')
-            dstcrs = pyproj.CRS(self.datasets["20m"]["crs"])
+        Reproject all bands in scene to target CRS and clip to rectangle
+        defined by bounds of polygonfeature  stored in GeoJSON file.
+        If `crop` is True the bands are cropped to polygon outline. All bands
+        in resulting collection have same resolution. For res=20, the '10m'
+        dataset bands are downsampled, while for res=10, the bands of '20m'
+        dataset are upsampled.
+
+        Note:
+            For GeoJSON without stored CRS information, the method assume that
+            coordinates coincide with scene CRS
+
+        Args:
+            geojson (str): filename of GeoJSON with polygon feature
+
+        Keyword Args:
+            dstcrs(str or pyproj.CRS): coordinate system of clipped bands
+            res (int): resolution of clipped bands. Default 20
+            name (str): name of collection. Default is 'Clip'
+            include8a (bool): whether to include B8A band. Dafault False
+            crop (bool): whether to crop to polygon outline. Default False
+
+        Returns:
+            `s2lx.S2` collection
+
+        """
+        if dstcrs is not None:
+            with open(geojson) as f:
+                jsondata = json.load(f)
+            if "crs" in jsondata:
+                srcsrs = pyproj.CRS(jsondata["crs"]["properties"]["name"])
+            else:
+                srcsrs = self.crs
+            dstcrs = pyproj.CRS(dstcrs)
+            clip = geometry.shape(jsondata["features"][0]["geometry"]).buffer(0)
+            if srcsrs != dstcrs:
+                reproject = pyproj.Transformer.from_crs(srcsrs, dstcrs, always_xy=True).transform
+                clip = ops.transform(reproject, clip)
+            bnds = clip.bounds
+            if crop:
+                return self.warp(
+                    bnds,
+                    dstcrs=dstcrs,
+                    name=name,
+                    include8a=include8a,
+                    cutlineLayer=geojson,
+                )
+            else:
+                return self.warp(bnds, dstcrs=dstcrs, name=name, include8a=include8a)
+
+    def warp(
+        self,
+        outputBounds,
+        res=20,
+        dstcrs=None,
+        name="Clip",
+        include8a=False,
+        cutlineLayer=None,
+    ):
+        """Reproject and clip scene by by coordinates
+
+        Reproject all bands in scene to target CRS and clip to rectangular
+        window defined by coordinates. All bands in resulting collection have same
+        resolution. For res=20, the '10m' dataset bands are downsampled,
+        while for res=10, the bands of '20m' dataset are upsampled.
+
+        Note:
+            This method assume that bound coordinates are given in
+            target CRS
+
+        Args:
+            outputBounds (tuple): output bounds as (minX, minY, maxX, maxY)
+                in target CRS
+
+        Keyword Args:
+            res (int): resolution of clipped bands. Default 20
+            name (str): name of collection. Default is 'Clip'
+            include8a (bool): whether to include B8A band. Dafault False
+
+        Returns:
+            `s2lx.S2` collection
+
+        """
+        if outputBounds is not None and dstcrs is not None:
+            wgs84 = pyproj.CRS("EPSG:4326")
+            dstcrs = pyproj.CRS(dstcrs)
             reproject = pyproj.Transformer.from_crs(wgs84, dstcrs, always_xy=True).transform
             # safe footprint
-            footprint = ops.transform(reproject, wkt.loads(self.meta['FOOTPRINT'])).buffer(-200)
-            # prepare mask
-            cg = np.arange(projWin[0] + res // 2, projWin[2], res)
-            rg = np.arange(projWin[1] - res // 2, projWin[3], -res)
-            xx, yy = np.meshgrid(cg, rg)
-            footpath = path.Path(np.array(footprint.exterior.xy).T)
-            mask = np.invert(np.reshape(footpath.contains_points(np.array([xx.ravel(), yy.ravel()]).T), xx.shape))
+            footprint = ops.transform(reproject, wkt.loads(self.meta["FOOTPRINT"])).buffer(-200)
             # go
             meta = self.meta.copy()
             rasters = []
             # 20m
-            sds = gdal.Translate(
-                "/vsimem/in_memory_output.tif",
-                gdal.Open(self.datasets["20m"]["xml"]),
-                projWin=projWin,
-                xRes=res,
-                yRes=res,
-                resampleAlg=gdal.GRA_Average,
+            if cutlineLayer is not None:
+                sds = gdal.Warp(
+                    "/vsimem/in_memory_output.tif",
+                    gdal.Open(self.datasets["20m"]["xml"]),
+                    outputBounds=outputBounds,
+                    dstSRS=dstcrs,
+                    xRes=res,
+                    yRes=res,
+                    targetAlignedPixels=True,
+                    cutlineLayer=cutlineLayer,
+                    cropToCutline=True,
+                    resampleAlg=gdal.GRA_Average,
+                )
+            else:
+                sds = gdal.Warp(
+                    "/vsimem/in_memory_output.tif",
+                    gdal.Open(self.datasets["20m"]["xml"]),
+                    outputBounds=outputBounds,
+                    dstSRS=dstcrs,
+                    xRes=res,
+                    yRes=res,
+                    targetAlignedPixels=True,
+                    resampleAlg=gdal.GRA_Average,
+                )
+            # prepare mask
+            transform = sds.GetGeoTransform()
+            cg = np.arange(
+                transform[0] + transform[1] // 2,
+                transform[0] + sds.RasterXSize * transform[1],
+                transform[1],
             )
+            rg = np.arange(
+                transform[3] + transform[5] // 2,
+                transform[3] + sds.RasterYSize * transform[5],
+                transform[5],
+            )
+            xx, yy = np.meshgrid(cg, rg)
+            footpath = path.Path(np.array(footprint.exterior.xy).T)
+            mask = np.invert(
+                np.reshape(
+                    footpath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
+                    xx.shape,
+                )
+            )
+            # cutline
+            if cutlineLayer is not None:
+                with open(cutlineLayer) as f:
+                    jsondata = json.load(f)
+                if "crs" in jsondata:
+                    srcsrs = pyproj.CRS(jsondata["crs"]["properties"]["name"])
+                else:
+                    srcsrs = pyproj.CRS(self.datasets["20m"]["crs"])
+                dstcrs = pyproj.CRS(dstcrs)
+                clip = geometry.shape(jsondata["features"][0]["geometry"]).buffer(0)
+                if srcsrs != dstcrs:
+                    reproject = pyproj.Transformer.from_crs(srcsrs, dstcrs, always_xy=True).transform
+                    clip = ops.transform(reproject, clip)
+                clippath = path.Path(np.array(clip.exterior.xy).T)
+                mask = np.logical_or(
+                    mask,
+                    np.invert(
+                        np.reshape(
+                            clippath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
+                            xx.shape,
+                        )
+                    ),
+                )
+            # go
             for band in ["B5", "B6", "B7", "B8A", "B11", "B12"]:
                 bmeta = self.datasets["20m"]["bands"][band].copy()
                 rb = sds.GetRasterBand(bmeta.pop("n"))
                 vals = rb.ReadAsArray().astype(np.int16)
                 if band == "B8A":
                     if include8a:
-                        rasters.append(Band('a8', np.ma.masked_array(vals, mask), sds.GetGeoTransform(), sds.GetProjection()))
-                        meta['a8'] = bmeta
+                        rasters.append(
+                            Band(
+                                "a8",
+                                np.ma.masked_array(vals, mask),
+                                sds.GetGeoTransform(),
+                                sds.GetProjection(),
+                            )
+                        )
+                        meta["a8"] = bmeta
                 else:
-                    rasters.append(Band(band.lower(), np.ma.masked_array(vals, mask), sds.GetGeoTransform(), sds.GetProjection()))
+                    rasters.append(
+                        Band(
+                            band.lower(),
+                            np.ma.masked_array(vals, mask),
+                            sds.GetGeoTransform(),
+                            sds.GetProjection(),
+                        )
+                    )
                     meta[band.lower()] = bmeta
-            sds = gdal.Translate(
-                "/vsimem/in_memory_output.tif",
-                gdal.Open(self.datasets["10m"]["xml"]),
-                projWin=projWin,
-                xRes=res,
-                yRes=res,
-                resampleAlg=gdal.GRA_Average,
-            )
+            # 10 m
+            if cutlineLayer is not None:
+                sds = gdal.Warp(
+                    "/vsimem/in_memory_output.tif",
+                    gdal.Open(self.datasets["10m"]["xml"]),
+                    outputBounds=outputBounds,
+                    dstSRS=dstcrs,
+                    xRes=res,
+                    yRes=res,
+                    targetAlignedPixels=True,
+                    cutlineLayer=cutlineLayer,
+                    cropToCutline=True,
+                    resampleAlg=gdal.GRA_Average,
+                )
+            else:
+                sds = gdal.Warp(
+                    "/vsimem/in_memory_output.tif",
+                    gdal.Open(self.datasets["10m"]["xml"]),
+                    outputBounds=outputBounds,
+                    dstSRS=dstcrs,
+                    xRes=res,
+                    yRes=res,
+                    targetAlignedPixels=True,
+                    resampleAlg=gdal.GRA_Average,
+                )
             for band in ["B4", "B3", "B2", "B8"]:
                 bmeta = self.datasets["10m"]["bands"][band].copy()
                 rb = sds.GetRasterBand(bmeta.pop("n"))
                 vals = rb.ReadAsArray().astype(np.int16)
-                rasters.append(Band(band.lower(), np.ma.masked_array(vals, mask), sds.GetGeoTransform(), sds.GetProjection()))
+                rasters.append(
+                    Band(
+                        band.lower(),
+                        np.ma.masked_array(vals, mask),
+                        sds.GetGeoTransform(),
+                        sds.GetProjection(),
+                    )
+                )
                 meta[band.lower()] = bmeta
             return S2(*rasters, meta=meta, name=name)
 
 
 class S2:
+    """Class to store homogeneous collection of bands
+
+    All bands in collection share geographic reference, size and resolution.
+    Individual bands in collection could be accessed by dot notation.
+
+    Args:
+        *args: any number of `Band` instances
+
+    Keyword Args:
+        name (str): mame of collection. Default is 'S2'
+        meta (dict): Dictionary with metadata. Default is {}
+
+    Examples:
+        To acceess band, just use band name
+
+        >>> d.bands
+        ['b11', 'b12', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8']
+        >>> d.b12 / d.b8
+        Band b12/b8 (904, 1041) float64
+        Min:0.500583 Max:1.86126 Vmin:0.962256 Vmax:1.40753
+
+    """
+
     def __init__(self, *rasters, **kwargs):
         self._bands = rasters
         self.meta = kwargs.get("meta", {})
@@ -206,9 +600,11 @@ class S2:
 
     @property
     def bands(self):
+        """list: Sorted list of band names"""
         return sorted([k.name for k in self._bands])
 
     def restored_pca(self, **kwargs):
+        """PCA based filtering"""
         remove = kwargs.get("remove", ())
         if isinstance(remove, int):
             remove = (remove,)
@@ -223,25 +619,55 @@ class S2:
             vals = b.array.copy()
             vals[np.invert(b.array.mask)] = restored[:, ix]
             rasters.append(b.copy(array=vals))
-        meta = dict(components=pca.components_, ev=pca.explained_variance_, evr=pca.explained_variance_ratio_)
-        return S2(*rasters, meta=meta, name=self.name + ' PCA restored')
+        meta = dict(
+            components=pca.components_,
+            ev=pca.explained_variance_,
+            evr=pca.explained_variance_ratio_,
+        )
+        return S2(*rasters, meta=meta, name=self.name + " PCA restored")
 
     def pca(self, **kwargs):
+        """PCA analysis"""
         centered = kwargs.get("centered", True)
         n = kwargs.get("n", len(self._bands))
         X = np.array([b.values for b in self._bands]).T
+        if centered:
+            X -= X.mean(axis=0)
         pca = decomposition.PCA(n_components=n)
         y_pred = pca.fit_transform(X)
         rasters = []
         for ix in range(n):
             vals = self._bands[0].array.copy()
             vals[np.invert(self._bands[0].array.mask)] = y_pred[:, ix]
-            rasters.append(self._bands[0].copy(array=vals, name=f'pc{ix}'))
-        meta = dict(components=pca.components_, ev=pca.explained_variance_, evr=pca.explained_variance_ratio_)
-        return S2(*rasters, meta=meta, name=self.name + ' PCA')
+            rasters.append(self._bands[0].copy(array=vals, name=f"pc{ix}"))
+        meta = dict(
+            components=pca.components_,
+            ev=pca.explained_variance_,
+            evr=pca.explained_variance_ratio_,
+        )
+        return S2(*rasters, meta=meta, name=self.name + " PCA")
 
 
 class Band:
+    """Class to store band data
+
+    Band is internally stores as masked array tu support ROI operations
+
+    Args:
+        name (str): name of the band. Name must start with a letter or the
+            underscore character (not a number) and can only contain
+            alpha-numeric characters and underscores.
+        array (numpy.ma.array): band data as 2d numpy masked array
+        transform (tuple): 6 coefficients geotransform. Rotation not supported
+        projection (str): CRS in WKT
+
+    Attributes:
+        shape (tuple): shape of raster array
+        vmin (float): minimum value used for colorscale. Default 2% percentile
+        vmax (float): maximum value used for colorscale. Default 98% percentile
+
+    """
+
     def __init__(self, name, array, transform, projection):
         self.array = array
         self.name = name
@@ -252,11 +678,13 @@ class Band:
         self.vmax = np.nanpercentile(self.values, 98)
 
     def __repr__(self):
-        return f'Band {self.name} {self.shape} {self.dtype}\nMin:{self.min:g} Max:{self.max:g} Vmin:{self.vmin:g} Vmax:{self.vmax:g}'
+        txt = f"Band {self.name} {self.shape} {self.dtype}\n"
+        txt += f"Min:{self.min:g} Max:{self.max:g} Vmin:{self.vmin:g} Vmax:{self.vmax:g}"
+        return txt
 
     def copy(self, **kwargs):
-        name = kwargs.get('name', self.name)
-        array = kwargs.get('array', self.array).copy()
+        name = kwargs.get("name", self.name)
+        array = kwargs.get("array", self.array).copy()
         return Band(name, array, self.transform, self.projection)
 
     @property
@@ -271,102 +699,102 @@ class Band:
 
     def __add__(self, other):
         if isinstance(other, Band):
-            return self.copy(array=self.array + other.array, name=f'{self.name}+{other.name}')
+            return self.copy(array=self.array + other.array, name=f"{self.name}+{other.name}")
         elif isinstance(other, numbers.Number):
-            return self.copy(array=self.array + other, name=f'{self.name}+{other}')
+            return self.copy(array=self.array + other, name=f"{self.name}+{other}")
         else:
-            raise ValueError(f'{type(other)} not suppoorted for addition')
+            raise ValueError(f"{type(other)} not suppoorted for addition")
 
     def __radd__(self, other):
         if isinstance(other, Band):
-            return self.copy(array=self.array + other.array, name=f'{other.name}+{self.name}')
+            return self.copy(array=self.array + other.array, name=f"{other.name}+{self.name}")
         elif isinstance(other, numbers.Number):
-            return self.copy(array=self.array + other, name=f'{other}+{self.name}')
+            return self.copy(array=self.array + other, name=f"{other}+{self.name}")
         else:
-            raise ValueError(f'{type(other)} not suppoorted for addition')
+            raise ValueError(f"{type(other)} not suppoorted for addition")
 
     def __sub__(self, other):
         if isinstance(other, Band):
-            return self.copy(array=self.array - other.array, name=f'{self.name}-{other.name}')
+            return self.copy(array=self.array - other.array, name=f"{self.name}-{other.name}")
         elif isinstance(other, numbers.Number):
-            return self.copy(array=self.array - other, name=f'{self.name}-{other}')
+            return self.copy(array=self.array - other, name=f"{self.name}-{other}")
         else:
-            raise ValueError(f'{type(other)} not suppoorted for addition')
+            raise ValueError(f"{type(other)} not suppoorted for addition")
 
     def __rsub__(self, other):
         if isinstance(other, Band):
-            return self.copy(array=other.array - self.array, name=f'{other.name}-{self.name}')
+            return self.copy(array=other.array - self.array, name=f"{other.name}-{self.name}")
         elif isinstance(other, numbers.Number):
-            return self.copy(array=other - self.array, name=f'{other}-{self.name}')
+            return self.copy(array=other - self.array, name=f"{other}-{self.name}")
         else:
-            raise ValueError(f'{type(other)} not suppoorted for addition')
+            raise ValueError(f"{type(other)} not suppoorted for addition")
 
     def __mul__(self, other):
-        if '+' in self.name or '-' in self.name:
-            sname = f'({self.name})'
+        if "+" in self.name or "-" in self.name:
+            sname = f"({self.name})"
         else:
             sname = self.name
         if isinstance(other, Band):
-            if '+' in other.name or '-' in other.name:
-                oname = f'({other.name})'
+            if "+" in other.name or "-" in other.name:
+                oname = f"({other.name})"
             else:
                 oname = other.name
-            return self.copy(array=self.array * other.array, name=f'{sname}*{oname}')
+            return self.copy(array=self.array * other.array, name=f"{sname}*{oname}")
         elif isinstance(other, numbers.Number):
-            return self.copy(array=self.array * other, name=f'{sname}*{other}')
+            return self.copy(array=self.array * other, name=f"{sname}*{other}")
         else:
-            raise ValueError(f'{type(other)} not suppoorted for addition')
+            raise ValueError(f"{type(other)} not suppoorted for addition")
 
     def __rmul__(self, other):
-        if '+' in self.name or '-' in self.name:
-            sname = f'({self.name})'
+        if "+" in self.name or "-" in self.name:
+            sname = f"({self.name})"
         else:
             sname = self.name
         if isinstance(other, Band):
-            if '+' in other.name or '-' in other.name:
-                oname = f'({other.name})'
+            if "+" in other.name or "-" in other.name:
+                oname = f"({other.name})"
             else:
                 oname = other.name
-            return self.copy(array=self.array * other.array, name=f'{oname}*{sname}')
+            return self.copy(array=self.array * other.array, name=f"{oname}*{sname}")
         elif isinstance(other, numbers.Number):
-            return self.copy(array=self.array * other, name = f'{other}*{sname}')
+            return self.copy(array=self.array * other, name=f"{other}*{sname}")
         else:
-            raise ValueError(f'{type(other)} not suppoorted for addition')
+            raise ValueError(f"{type(other)} not suppoorted for addition")
 
     def __truediv__(self, other):
-        if '+' in self.name or '-' in self.name:
-            sname = f'({self.name})'
+        if "+" in self.name or "-" in self.name:
+            sname = f"({self.name})"
         else:
             sname = self.name
         if isinstance(other, Band):
-            if '+' in other.name or '-' in other.name:
-                oname = f'({other.name})'
+            if "+" in other.name or "-" in other.name:
+                oname = f"({other.name})"
             else:
                 oname = other.name
-            return self.copy(array=self.array / other.array, name=f'{sname}/{oname}')
+            return self.copy(array=self.array / other.array, name=f"{sname}/{oname}")
         elif isinstance(other, numbers.Number):
-            return self.copy(array=self.array / other, name=f'{sname}/{other}')
+            return self.copy(array=self.array / other, name=f"{sname}/{other}")
         else:
-            raise ValueError(f'{type(other)} not suppoorted for addition')
+            raise ValueError(f"{type(other)} not suppoorted for addition")
 
     def __rtruediv__(self, other):
-        if '+' in self.name or '-' in self.name:
-            sname = f'({self.name})'
+        if "+" in self.name or "-" in self.name:
+            sname = f"({self.name})"
         else:
             sname = self.name
         if isinstance(other, Band):
-            if '+' in other.name or '-' in other.name:
-                oname = f'({other.name})'
+            if "+" in other.name or "-" in other.name:
+                oname = f"({other.name})"
             else:
                 oname = other.name
-            return self.copy(array=self.array / other.array, name=f'{oname}/{sname}')
+            return self.copy(array=self.array / other.array, name=f"{oname}/{sname}")
         elif isinstance(other, numbers.Number):
-            return self.copy(array=self.array / other, name=f'{other}/{sname}')
+            return self.copy(array=self.array / other, name=f"{other}/{sname}")
         else:
-            raise ValueError(f'{type(other)} not suppoorted for addition')
+            raise ValueError(f"{type(other)} not suppoorted for addition")
 
     def __abs__(self):
-        return Band(f'|{self.name}|', abs(self.array))
+        return Band(f"|{self.name}|", abs(self.array))
 
     @property
     def dtype(self):
@@ -392,28 +820,28 @@ class Band:
         return self.norm(self.array)
 
     def apply(self, fun):
-        sname = f'{fun.__name__}' + f'({self.name})'
+        sname = f"{fun.__name__}" + f"({self.name})"
         vals = self.array.copy()
         vals[np.invert(self.array.mask)] = fun(self.values)
         return self.copy(array=vals, name=sname)
 
     def patch(self, other, fit=False):
-        assert self.transform == other.transform, 'transform must be identical'
-        assert self.projection == other.projection, 'projection must be identical'
+        assert self.transform == other.transform, "transform must be identical"
+        assert self.projection == other.projection, "projection must be identical"
         vals = np.array(self.array)
         mask = np.array(self.array.mask)
         ovals = np.array(other.array)[mask]
         if fit:
             o1, o2 = self.intersect(other)
             pp = np.polyfit(o2.values, o1.values, 1)
-            ovals = ovals*pp[0] + pp[1]
+            ovals = ovals * pp[0] + pp[1]
         vals[mask] = ovals
         mask[mask] = np.array(other.array.mask)[mask]
         return self.copy(array=np.ma.masked_array(vals, mask))
 
     def intersect(self, other):
-        assert self.transform == other.transform, 'transform must be identical'
-        assert self.projection == other.projection, 'projection must be identical'
+        assert self.transform == other.transform, "transform must be identical"
+        assert self.projection == other.projection, "projection must be identical"
         mask1 = np.array(self.array.mask)
         mask2 = np.array(other.array.mask)
         mask = np.logical_and(np.invert(mask1), np.invert(mask2))
@@ -433,20 +861,25 @@ class Band:
         # plot
         f, ax = plt.subplots(figsize=figsize)
         img = ax.imshow(self.array, cmap=cmap, norm=self.norm)
-        ax.set_title(f'{self.name}')
+        ax.set_title(f"{self.name}")
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
-        cbar = f.colorbar(img, cax=cax, extend="both")
+        f.colorbar(img, cax=cax, extend="both")
         ax.set_aspect(1)
         f.tight_layout()
         plt.show()
 
     def save(self, filename, **kwargs):
         # save
-        if filename.lower().endswith('.tif'):
-            driver_gtiff = gdal.GetDriverByName('GTiff')
-            ds_create = driver_gtiff.Create(filename, xsize=self.shape[1], ysize=self.shape[0], bands=1,
-                                            eType=gdal_array.NumericTypeCodeToGDALTypeCode(self.dtype))
+        if filename.lower().endswith(".tif"):
+            driver_gtiff = gdal.GetDriverByName("GTiff")
+            ds_create = driver_gtiff.Create(
+                filename,
+                xsize=self.shape[1],
+                ysize=self.shape[0],
+                bands=1,
+                eType=gdal_array.NumericTypeCodeToGDALTypeCode(self.dtype),
+            )
             ds_create.SetProjection(self.projection)
             ds_create.SetGeoTransform(self.transform)
             dt = np.array(self.array.data)
@@ -456,11 +889,29 @@ class Band:
             ds_create.GetRasterBand(1).WriteArray(dt)
             ds_create = None
         else:
-            print('filename must have .tif extension')
+            print("filename must have .tif extension")
+
 
 class Composite:
-    def __init__(self, r, g, b, name='RGB composite'):
-        assert r.shape == g.shape == b.shape, 'Shapes of bands must be same'
+    """Class to store RGB composite
+
+    Args:
+        r (Band): band used for red channel
+        g (Band): band used for green channel
+        b (Band): band used for blue channel
+
+    Keyword Args:
+        name (str): name of the RGB composite
+
+    Attributes:
+        shape (tuple): shape of raster array
+        transform (tuple): 6 coefficients geotransform. Rotation not supported
+        projection (str): CRS in WKT
+
+    """
+
+    def __init__(self, r, g, b, name="RGB composite"):
+        assert r.shape == g.shape == b.shape, "Shapes of bands must be same"
         self.name = name
         self.r = r
         self.g = g
@@ -470,7 +921,7 @@ class Composite:
         self.shape = r.shape
 
     def __repr__(self):
-        return f'Composite {self.name} {self.shape} [{self.r.name} {self.g.name} {self.b.name}]'
+        return f"Composite {self.name} {self.shape} [{self.r.name} {self.g.name} {self.b.name}]"
 
     def __array__(self, dtype=None):
         if dtype is None:
@@ -484,19 +935,25 @@ class Composite:
         rgb = np.dstack((self.r.normalized, self.g.normalized, self.b.normalized))
         # plot
         f, ax = plt.subplots(figsize=figsize)
-        img = ax.imshow(rgb)
-        ax.set_title(f'{self.name} [{self.r.name} {self.g.name} {self.b.name}]')
+        ax.imshow(rgb)
+        ax.set_title(f"{self.name} [{self.r.name} {self.g.name} {self.b.name}]")
         ax.set_aspect(1)
         f.tight_layout()
         plt.show()
 
     def save(self, filename, **kwargs):
         # save
-        if filename.lower().endswith('.tif'):
-            driver_gtiff = gdal.GetDriverByName('GTiff')
-            options = ['PHOTOMETRIC=RGB', 'PROFILE=GeoTIFF']
-            ds_create = driver_gtiff.Create(filename, xsize=self.shape[1], ysize=self.shape[0],
-                                            bands=4, eType=gdal.GDT_Float64, options=options)
+        if filename.lower().endswith(".tif"):
+            driver_gtiff = gdal.GetDriverByName("GTiff")
+            options = ["PHOTOMETRIC=RGB", "PROFILE=GeoTIFF"]
+            ds_create = driver_gtiff.Create(
+                filename,
+                xsize=self.shape[1],
+                ysize=self.shape[0],
+                bands=4,
+                eType=gdal.GDT_Float64,
+                options=options,
+            )
             ds_create.SetProjection(self.projection)
             ds_create.SetGeoTransform(self.transform)
             # red
@@ -513,5 +970,4 @@ class Composite:
             ds_create.GetRasterBand(4).SetColorInterpretation(gdal.GCI_AlphaBand)
             ds_create = None
         else:
-            print('filename must have .tif extension')
-
+            print("filename must have .tif extension")

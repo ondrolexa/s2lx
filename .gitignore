@@ -20,6 +20,7 @@ lib64/
 parts/
 sdist/
 var/
+venv/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -52,12 +53,30 @@ coverage.xml
 # Django stuff:
 *.log
 
-# Jupyter
-.ipynb_checkpoints
-*/.ipynb_checkpoints/*
-
 # Sphinx documentation
-docs/_build/
+docs/build/
+docs/source/generated/
+
+# pytest
+.pytest_cache/
 
 # PyBuilder
 target/
+
+# Editor files
+#mac
+.DS_Store
+*~
+
+#vim
+*.swp
+*.swo
+
+#pycharm
+.idea/
+
+#VSCode
+.vscode/
+
+#Ipython Notebook
+.ipynb_checkpoints
