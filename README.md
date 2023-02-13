@@ -1,6 +1,6 @@
 # s2lx
 
-![master](https://github.com/ondrolexa/s2lx/actions/workflows/master.yml/badge.svg)
+[![main](https://github.com/ondrolexa/s2lx/actions/workflows/master.yml/badge.svg)](https://github.com/ondrolexa/s2lx/actions/workflows/master.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/ondrolexa/s2lx/blob/master/LICENSE)
 
 Simple Sentinel-2 tools
