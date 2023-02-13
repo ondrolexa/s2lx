@@ -1,0 +1,16 @@
+name: s2lx
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python>=3.9
+  - numpy
+  - matplotlib
+  - scipy
+  - gdal
+  - shapely>=2
+  - pyproj
+  - scikit-image
+  - scikit-learn
+  - flake8
+  - pytest
