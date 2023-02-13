@@ -90,7 +90,7 @@ class SAFE:
                 meta = self.datasets[dataset]["bands"][band]
                 return sds.GetRasterBand(meta["n"]).ReadAsArray(), meta
 
-    def gclip20(self, name="Clip", band="B12"):
+    def gclip(self, name="Clip", band="B12"):
         def onselect_function(eclick, erelease):
             pass
 
@@ -132,15 +132,15 @@ class SAFE:
             lrx = ulx + xs * sds.RasterXSize
             lry = uly + ys * sds.RasterYSize
             print(f"projWin=[{ulx}, {uly}, {lrx}, {lry}]")
-            return self.clip20(projWin=(ulx, uly, lrx, lry), name=name)
+            return self.clip(projWin=(ulx, uly, lrx, lry), name=name)
 
-    def clip20geojson(self, geojson, name="Clip", include8a=False):
+    def clip_geojson(self, geojson, name="Clip", include8a=False):
         with open(geojson) as f:
             features = json.load(f)["features"]
         bnds = geometry.shape(features[0]["geometry"]).buffer(0).bounds
-        return self.clip20(projWin=(bnds[0], bnds[3], bnds[2], bnds[1]), name=name, include8a=include8a)
+        return self.clip(projWin=(bnds[0], bnds[3], bnds[2], bnds[1]), name=name, include8a=include8a)
 
-    def clip20(self, projWin=None, name="Clip", include8a=False):
+    def clip(self, res=20, projWin=None, name="Clip", include8a=False):
         if projWin is not None:
             wgs84 = pyproj.CRS('EPSG:4326')
             dstcrs = pyproj.CRS(self.datasets["20m"]["crs"])
@@ -148,8 +148,8 @@ class SAFE:
             # safe footprint
             footprint = ops.transform(reproject, wkt.loads(self.meta['FOOTPRINT'])).buffer(-200)
             # prepare mask
-            cg = np.arange(projWin[0] + 10, projWin[2], 20)
-            rg = np.arange(projWin[1] - 10, projWin[3], -20)
+            cg = np.arange(projWin[0] + res // 2, projWin[2], res)
+            rg = np.arange(projWin[1] - res // 2, projWin[3], -res)
             xx, yy = np.meshgrid(cg, rg)
             footpath = path.Path(np.array(footprint.exterior.xy).T)
             mask = np.invert(np.reshape(footpath.contains_points(np.array([xx.ravel(), yy.ravel()]).T), xx.shape))
@@ -161,8 +161,8 @@ class SAFE:
                 "/vsimem/in_memory_output.tif",
                 gdal.Open(self.datasets["20m"]["xml"]),
                 projWin=projWin,
-                xRes=20,
-                yRes=20,
+                xRes=res,
+                yRes=res,
                 resampleAlg=gdal.GRA_Average,
             )
             for band in ["B5", "B6", "B7", "B8A", "B11", "B12"]:
@@ -180,8 +180,8 @@ class SAFE:
                 "/vsimem/in_memory_output.tif",
                 gdal.Open(self.datasets["10m"]["xml"]),
                 projWin=projWin,
-                xRes=20,
-                yRes=20,
+                xRes=res,
+                yRes=res,
                 resampleAlg=gdal.GRA_Average,
             )
             for band in ["B4", "B3", "B2", "B8"]:
