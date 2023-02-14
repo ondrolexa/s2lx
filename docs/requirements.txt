@@ -1,2 +1,0 @@
-sphinx_mdinclude
-git+https://github.com/ondrolexa/s2lx.git

@@ -2,7 +2,7 @@ version: 2
 formats: all
 
 conda:
-  environment: environment.yml
+  environment: environment-rtd.yml
 
 build:
   os: ubuntu-22.04
@@ -12,7 +12,6 @@ build:
 # This part is necessary otherwise the project is not built
 python:
   install:
-    - requirements: docs/requirements.txt
     - method: pip
       path: .
 
