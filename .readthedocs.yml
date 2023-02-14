@@ -12,6 +12,7 @@ build:
 # This part is necessary otherwise the project is not built
 python:
   install:
+    - requirements: docs/requirements.txt
     - method: pip
       path: .
 
