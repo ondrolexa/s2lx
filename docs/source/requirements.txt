@@ -1,1 +1,1 @@
-sphinx_copybutton
+git+https://github.com/ondrolexa/s2lx.git

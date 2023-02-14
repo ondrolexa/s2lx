@@ -37,52 +37,54 @@ You can preview whole scene:
 
     s.preview()
 
-Clip region of interest (Note that projWin is defined in coordinate system of scene) and store in `S2` collection:
+Clip region of interest (note that bounds are defined in coordinate system of scene) and store in `S2` collection:
 
-    projWin = (440000, 5123000, 494000, 5093000)
-    d = s.clip(projWin, name='My Region')
+    >>> bounds = (440000, 5093000, 494000, 5123000)  # (minx, miny, maxx, maxy)
+    >>> d = s.clip(bounds, name='My Region')
 
 To see the list of bands:
 
-    d.bands
+    >>> d.bands
+    ['b11', 'b12', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8']
 
 Individual bands could ba accessed as properties:
 
-    d.b4.show()
+    >>> d.b4.show()
 
 You can use `Composite` class to create RGB composite:
 
-    rgb = Composite(d.b4, d.b3, d.b2, name='True Color')
-    rgb.show()
+    >>> rgb = Composite(d.b4, d.b3, d.b2, name='True Color')
+    >>> rgb.show()
 
 Bands and composites could be saved to GeoTIFF with `save` method:
 
-    d.b4.save('b4.tif')
-    rgb.save('truecolor.tif')
+    >>> d.b4.save('b4.tif')
+    >>> rgb.save('truecolor.tif')
 
 Bands support simple mathematical operations (addition, subtraction, division, multiplication)
 
-    alt = Composite(d.b11/d.b12, d.b4/d.b2, d.b4/d.b11, name='Alterations')
-    alt.show()
+    >>> alt = Composite(d.b11/d.b12, d.b4/d.b2, d.b4/d.b11, name='Alterations')
+    >>> alt.show()
 
 Bands could be filtered (check `s2lx.s2filters` for possible filters):
 
-    b12f = d.b12.apply(median_filter(radius=4))
+    >>> medfilter = median_filter(radius=4)
+    >>> b12f = d.b12.apply(medfilter)
 
 You can do PCA analysis using `S2.pca` method:
 
-    p = d.pca()
+    >>> p = d.pca()
 
 To create RGB composite from first three principal components:
 
-    pca = Composite(p.pc0, p.pc1, p.pc4, name='PCA')
-    pca.show()
+    >>> pca = Composite(p.pc0, p.pc1, p.pc4, name='PCA')
+    >>> pca.show()
 
 You can use also PCA to filter your data, i.,e. use only few PC to reconstruct dataset. Here we remove last four (from 9) components with lowest explained variance and reconstruct all bands:
 
-    r = d.restored_pca(remove=(5,6,7,8))
-    altr = Composite(r.b11/r.b12, r.b4/r.b2, r.b4/r.b11, name='Alterations filtered')
-    altr.show()
+    >>> r = d.restored_pca(remove=(5,6,7,8))
+    >>> altr = Composite(r.b11/r.b12, r.b4/r.b2, r.b4/r.b11, name='Alterations filtered')
+    >>> altr.show()
 
 ## License
 

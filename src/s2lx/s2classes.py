@@ -13,7 +13,7 @@ import pyproj
 from matplotlib import colors, path
 from matplotlib.widgets import RectangleSelector
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from osgeo import gdal, gdal_array
+from osgeo import gdal, ogr, gdal_array
 from shapely import geometry, ops, wkt
 from sklearn import decomposition
 from sklearn.cluster import AgglomerativeClustering, KMeans
@@ -113,7 +113,7 @@ class SAFE:
         # plot
         f, ax = plt.subplots(figsize=figsize)
         ax.imshow(tci)
-        ax.set_title(self.meta["PRODUCT_URI"])
+        ax.set_title(self.meta["PRODUCT_URI"].split('_')[5])
         ax.set_aspect(1)
         f.tight_layout()
         plt.show()
@@ -122,6 +122,67 @@ class SAFE:
     def crs(self):
         """pyproj.CRS: coordinate reference system of scene"""
         return pyproj.CRS(self.datasets["20m"]["crs"])
+
+    def footprint(self, dstcrs=None):
+        """Get scene footprint
+
+        Keyword Args:
+            dstcrs(str or pyproj.CRS): coordinate system of footprint.
+                Default is scene CRS.
+
+        Returns:
+            Shapely polygon feature
+
+        """
+        wgs84 = pyproj.CRS("EPSG:4326")
+        if dstcrs is None:
+            dstcrs = self.crs
+        else:
+            dstcrs = pyproj.CRS(dstcrs)
+        fpoly = wkt.loads(self.meta["FOOTPRINT"])
+        if dstcrs != wgs84:
+            reproject = pyproj.Transformer.from_crs(wgs84, dstcrs, always_xy=True).transform
+            # safe footprint
+            fpoly = ops.transform(reproject, fpoly).buffer(0)
+        return fpoly
+
+    def overlap(self, other):
+        """Check if scene footprints overlap
+
+        Args:
+            other: `s2lx.SAFE` scene
+
+        Returns:
+            True is footprints overlap, otherwise False
+
+        """
+        wgs84 = pyproj.CRS("EPSG:4326")
+        return self.footprint(dstcrs=wgs84).intersects(other.footprint(dstcrs=wgs84))
+
+    def intersection(self, other, dstcrs=None):
+        """Return intersections of scene footprints as shapely polygon
+
+        Args:
+            other: `s2lx.SAFE` scene
+
+        Keyword Args:
+            dstcrs(str or pyproj.CRS): coordinate system for intersection.
+                Default is scene CRS.
+
+        Returns:
+            shapely polygon
+
+        """
+        wgs84 = pyproj.CRS("EPSG:4326")
+        if dstcrs is None:
+            dstcrs = self.crs
+        else:
+            dstcrs = pyproj.CRS(dstcrs)
+        inter = self.footprint(dstcrs=wgs84).intersection(other.footprint(dstcrs=wgs84))
+        if wgs84 != dstcrs:
+            reproject = pyproj.Transformer.from_crs(wgs84, dstcrs, always_xy=True).transform
+            inter = ops.transform(reproject, inter)
+        return inter
 
     def get(self, dataset, band):
         """Get band as numpy array
@@ -140,21 +201,23 @@ class SAFE:
                 meta = self.datasets[dataset]["bands"][band]
                 return sds.GetRasterBand(meta["n"]).ReadAsArray(), meta
 
-    def clip_geojson(self, geojson, res=20, name="Clip", include8a=False):
-        """Clip scene by polygon stored in GeoJSON file
+    def clip_features(self, filename, driverName='GeoJSON', res=20, name="Clip", include8a=False):
+        """Clip scene to features extent in vector file
 
-        Clip all bands in scene by rectangle defined as bounds of polygon
-        stored in GeoJSON file. All bands in resulting collection have same
+        Clip all bands in scene by rectangular extent of features
+        stored in vector file. All bands in resulting collection have same
         resolution. For res=20, the '10m' dataset bands are downsampled,
         while for res=10, the bands of '20m' dataset are upsampled.
 
         Note:
-            This method assume that CRS of GeoJSON and scene is identical
+            This method assume that CRS of vector file and scene is identical
 
         Args:
-            geojson (str): filename of GeoJSON with polygon feature
+            filename (str): filename of vector file
 
         Keyword Args:
+            driverName (str): format of vector file. Default is 'GeoJSON'
+                For available options see `ogr2ogr --formats` 
             res (int): resolution of clipped bands. Default 20
             name (str): name of collection. Default is 'Clip'
             include8a (bool): whether to include B8A band. Dafault False
@@ -163,30 +226,34 @@ class SAFE:
             `s2lx.S2` collection
 
         """
-        with open(geojson) as f:
-            features = json.load(f)["features"]
-        bnds = geometry.shape(features[0]["geometry"]).buffer(0).bounds
+        driver = ogr.GetDriverByName(driverName)
+        ds = driver.Open(filename, 0)
+        layer = ds.GetLayer()
+        extent = layer.GetExtent()
+        bounds = (extent[0], extent[2], extent[1], extent[3])
         return self.clip(
-            (bnds[0], bnds[3], bnds[2], bnds[1]),
+            bounds,
             res=res,
             name=name,
             include8a=include8a,
         )
 
-    def clip(self, projWin, res=20, name="Clip", include8a=False):
-        """Clip scene by coordinates
+    def clip(self, bounds, res=20, name="Clip", include8a=False):
+        """Clip scene by extent coordinates
 
-        Clip all bands in scene by rectangle defined by subwindow. All bands
-        in resulting collection have same resolution. For res=20, the '10m'
-        dataset bands are downsampled, while for res=10, the bands of '20m'
-        dataset are upsampled.
+        Clip all bands in scene by rectangular bound (minX, minY, maxX, maxY).
+        All bands in resulting collection have same resolution. For res=20,
+        the '10m' dataset bands are downsampled, while for res=10, the bands
+        of '20m' dataset are upsampled.
 
         Note:
-            This method assume that coordinates of subwindow are given in
-            CRS of scene
+            Coordinates of the extent of the output are automatically aligned
+            to multiples of resolution. This method also assume that coordinates
+            of subwindow are given in CRS of scene
 
         Args:
-            projWin (tuple): subwindow to clip (ulx, uly, lrx, lry)
+            bounds (tuple): output bounds as (minX, minY, maxX, maxY)
+                in target CRS
 
         Keyword Args:
             res (int): resolution of clipped bands. Default 20
@@ -197,71 +264,48 @@ class SAFE:
             `s2lx.S2` collection
 
         """
-        if projWin is not None:
-            wgs84 = pyproj.CRS("EPSG:4326")
-            reproject = pyproj.Transformer.from_crs(wgs84, self.crs, always_xy=True).transform
-            # safe footprint
-            footprint = ops.transform(reproject, wkt.loads(self.meta["FOOTPRINT"])).buffer(-200)
-            # prepare mask
-            cg = np.arange(projWin[0] + res // 2, projWin[2], res)
-            rg = np.arange(projWin[1] - res // 2, projWin[3], -res)
-            xx, yy = np.meshgrid(cg, rg)
-            footpath = path.Path(np.array(footprint.exterior.xy).T)
-            mask = np.invert(
-                np.reshape(
-                    footpath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
-                    xx.shape,
-                )
+        footprint = self.footprint().buffer(-200)
+        # aligned pixels
+        bounds = [res * np.round(v / res) for v in bounds]
+        # prepare mask
+        cg = np.arange(bounds[0] + res // 2, bounds[2], res)
+        rg = np.arange(bounds[3] - res // 2, bounds[1], -res)
+        xx, yy = np.meshgrid(cg, rg)
+        footpath = path.Path(np.array(footprint.exterior.xy).T)
+        mask = np.invert(
+            np.reshape(
+                footpath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
+                xx.shape,
             )
-            # go
-            meta = self.meta.copy()
-            rasters = []
-            # 20m
-            sds = gdal.Translate(
-                "/vsimem/in_memory_output.tif",
-                gdal.Open(self.datasets["20m"]["xml"]),
-                projWin=projWin,
-                xRes=res,
-                yRes=res,
-                resampleAlg=gdal.GRA_Average,
-            )
-            for band in ["B5", "B6", "B7", "B8A", "B11", "B12"]:
-                bmeta = self.datasets["20m"]["bands"][band].copy()
-                rb = sds.GetRasterBand(bmeta.pop("n"))
-                vals = rb.ReadAsArray().astype(np.int16)
-                if band == "B8A":
-                    if include8a:
-                        rasters.append(
-                            Band(
-                                "a8",
-                                np.ma.masked_array(vals, mask),
-                                sds.GetGeoTransform(),
-                                sds.GetProjection(),
-                            )
-                        )
-                        meta["a8"] = bmeta
-                else:
+        )
+        # go
+        meta = self.meta.copy()
+        rasters = []
+        # 20m
+        sds = gdal.Translate(
+            "/vsimem/in_memory_output.tif",
+            gdal.Open(self.datasets["20m"]["xml"]),
+            projWin=(bounds[0], bounds[3], bounds[2], bounds[1]),
+            xRes=res,
+            yRes=res,
+            resampleAlg=gdal.GRA_Average,
+        )
+        for band in ["B5", "B6", "B7", "B8A", "B11", "B12"]:
+            bmeta = self.datasets["20m"]["bands"][band].copy()
+            rb = sds.GetRasterBand(bmeta.pop("n"))
+            vals = rb.ReadAsArray().astype(np.int16)
+            if band == "B8A":
+                if include8a:
                     rasters.append(
                         Band(
-                            band.lower(),
+                            "a8",
                             np.ma.masked_array(vals, mask),
                             sds.GetGeoTransform(),
                             sds.GetProjection(),
                         )
                     )
-                    meta[band.lower()] = bmeta
-            sds = gdal.Translate(
-                "/vsimem/in_memory_output.tif",
-                gdal.Open(self.datasets["10m"]["xml"]),
-                projWin=projWin,
-                xRes=res,
-                yRes=res,
-                resampleAlg=gdal.GRA_Average,
-            )
-            for band in ["B4", "B3", "B2", "B8"]:
-                bmeta = self.datasets["10m"]["bands"][band].copy()
-                rb = sds.GetRasterBand(bmeta.pop("n"))
-                vals = rb.ReadAsArray().astype(np.int16)
+                    meta["a8"] = bmeta
+            else:
                 rasters.append(
                     Band(
                         band.lower(),
@@ -271,7 +315,28 @@ class SAFE:
                     )
                 )
                 meta[band.lower()] = bmeta
-            return S2(*rasters, meta=meta, name=name)
+        sds = gdal.Translate(
+            "/vsimem/in_memory_output.tif",
+            gdal.Open(self.datasets["10m"]["xml"]),
+            projWin=(bounds[0], bounds[3], bounds[2], bounds[1]),
+            xRes=res,
+            yRes=res,
+            resampleAlg=gdal.GRA_Average,
+        )
+        for band in ["B4", "B3", "B2", "B8"]:
+            bmeta = self.datasets["10m"]["bands"][band].copy()
+            rb = sds.GetRasterBand(bmeta.pop("n"))
+            vals = rb.ReadAsArray().astype(np.int16)
+            rasters.append(
+                Band(
+                    band.lower(),
+                    np.ma.masked_array(vals, mask),
+                    sds.GetGeoTransform(),
+                    sds.GetProjection(),
+                )
+            )
+            meta[band.lower()] = bmeta
+        return S2(*rasters, meta=meta, name=name)
 
     def gclip(self, name="Clip", include8a=False, band="B12"):
         """Quick clip by rectangular selection
@@ -329,69 +394,74 @@ class SAFE:
                 gdal.Open(self.datasets["20m"]["xml"]),
                 srcWin=[cmin, rmin, cmax - cmin, rmax - rmin],
             )
-            ulx, xs, _, uly, _, ys = sds.GetGeoTransform()
-            lrx = ulx + xs * sds.RasterXSize
-            lry = uly + ys * sds.RasterYSize
-            print(f"projWin=[{ulx}, {uly}, {lrx}, {lry}]")
-            return self.clip((ulx, uly, lrx, lry), res=20, name=name, include8a=False)
+            minX, xs, _, maxY, _, ys = sds.GetGeoTransform()
+            maxX = minX + xs * sds.RasterXSize
+            minY = maxY + ys * sds.RasterYSize
+            print(f"bounds=({minX}, {minY}, {maxX}, {maxY})")
+            return self.clip((minX, minY, maxX, maxY), res=20, name=name, include8a=False)
 
-    def warp_geojson(self, geojson, dstcrs=None, res=20, name="Clip", include8a=False, crop=False):
-        """Reproject and clip scene by polygon stored in GeoJSON file
+    def warp_features(self, filename, dstcrs=None, driverName='GeoJSON', res=20, name="Clip", include8a=False, crop=False):
+        """Reproject and clip scene to extent of features in vector file
 
-        Reproject all bands in scene to target CRS and clip to rectangle
-        defined by bounds of polygonfeature  stored in GeoJSON file.
-        If `crop` is True the bands are cropped to polygon outline. All bands
-        in resulting collection have same resolution. For res=20, the '10m'
-        dataset bands are downsampled, while for res=10, the bands of '20m'
-        dataset are upsampled.
+        Reproject all bands in scene to target CRS and clip to rectangular region
+        defined by extent of features in vector file. If `crop` is True, the bands
+        are cropped to outline of features. All bands in resulting collection have
+        same resolution. For res=20, the '10m' dataset bands are downsampled, while
+        for res=10, the bands of '20m' dataset are upsampled.
 
         Note:
-            For GeoJSON without stored CRS information, the method assume that
+            For vector formats without stored CRS information, the method assume that
             coordinates coincide with scene CRS
 
         Args:
-            geojson (str): filename of GeoJSON with polygon feature
+            filename (str): filename of vector file
 
         Keyword Args:
-            dstcrs(str or pyproj.CRS): coordinate system of clipped bands
+            driverName (str): format of vector file. Default is 'GeoJSON'
+                For available options see `ogr2ogr --formats`
+            dstcrs(str or pyproj.CRS): target coordinate system. Default
+                is CRS of vector file
             res (int): resolution of clipped bands. Default 20
             name (str): name of collection. Default is 'Clip'
-            include8a (bool): whether to include B8A band. Dafault False
+            include8a (bool): whether to include B8A band. Default False
             crop (bool): whether to crop to polygon outline. Default False
 
         Returns:
             `s2lx.S2` collection
 
         """
-        if dstcrs is not None:
-            with open(geojson) as f:
-                jsondata = json.load(f)
-            if "crs" in jsondata:
-                srcsrs = pyproj.CRS(jsondata["crs"]["properties"]["name"])
-            else:
-                srcsrs = self.crs
+        driver = ogr.GetDriverByName(driverName)
+        ds = driver.Open(filename, 0)
+        layer = ds.GetLayer()
+        try:
+            srccrs = pyproj.CRS.from_wkt(layer.GetSpatialRef().ExportToWkt())
+        except pyproj.exceptions.CRSError:
+            srccrs = self.crs
+        if dstcrs is None:
+            dstcrs = srccrs
+        else:
             dstcrs = pyproj.CRS(dstcrs)
-            clip = geometry.shape(jsondata["features"][0]["geometry"]).buffer(0)
-            if srcsrs != dstcrs:
-                reproject = pyproj.Transformer.from_crs(srcsrs, dstcrs, always_xy=True).transform
-                clip = ops.transform(reproject, clip)
-            bnds = clip.bounds
-            if crop:
-                return self.warp(
-                    bnds,
-                    dstcrs=dstcrs,
-                    name=name,
-                    include8a=include8a,
-                    cutlineLayer=geojson,
-                )
-            else:
-                return self.warp(bnds, dstcrs=dstcrs, name=name, include8a=include8a)
+        # to do
+        clip = ops.unary_union([wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer])
+        if srccrs != dstcrs:
+            reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
+            clip = ops.transform(reproject, clip)
+        if crop:
+            return self.warp(
+                clip.bounds,
+                dstcrs,
+                name=name,
+                include8a=include8a,
+                cutlineLayer=geojson,
+            )
+        else:
+            return self.warp(clip.bounds, dstcrs, name=name, include8a=include8a)
 
     def warp(
         self,
-        outputBounds,
+        bounds,
+        dstcrs,
         res=20,
-        dstcrs=None,
         name="Clip",
         include8a=False,
         cutlineLayer=None,
@@ -404,12 +474,14 @@ class SAFE:
         while for res=10, the bands of '20m' dataset are upsampled.
 
         Note:
-            This method assume that bound coordinates are given in
-            target CRS
+            Coordinates of the extent of the output are automatically aligned
+            to multiples of resolution. This method also assume that bound
+            coordinates are given in target CRS.
 
         Args:
-            outputBounds (tuple): output bounds as (minX, minY, maxX, maxY)
+            bounds (tuple): output bounds as (minX, minY, maxX, maxY)
                 in target CRS
+            dstcrs(str or pyproj.CRS): target coordinate system
 
         Keyword Args:
             res (int): resolution of clipped bands. Default 20
@@ -420,138 +492,98 @@ class SAFE:
             `s2lx.S2` collection
 
         """
-        if outputBounds is not None and dstcrs is not None:
-            wgs84 = pyproj.CRS("EPSG:4326")
-            dstcrs = pyproj.CRS(dstcrs)
-            reproject = pyproj.Transformer.from_crs(wgs84, dstcrs, always_xy=True).transform
-            # safe footprint
-            footprint = ops.transform(reproject, wkt.loads(self.meta["FOOTPRINT"])).buffer(-200)
-            # go
-            meta = self.meta.copy()
-            rasters = []
-            # 20m
-            if cutlineLayer is not None:
-                sds = gdal.Warp(
-                    "/vsimem/in_memory_output.tif",
-                    gdal.Open(self.datasets["20m"]["xml"]),
-                    outputBounds=outputBounds,
-                    dstSRS=dstcrs,
-                    xRes=res,
-                    yRes=res,
-                    targetAlignedPixels=True,
-                    cutlineLayer=cutlineLayer,
-                    cropToCutline=True,
-                    resampleAlg=gdal.GRA_Average,
-                )
+        dstcrs = pyproj.CRS(dstcrs)
+        footprint = self.footprint(dstcrs=dstcrs).buffer(-200)
+        # aligned pixels
+        bounds = [res * np.round(v / res) for v in bounds]
+        # go
+        meta = self.meta.copy()
+        rasters = []
+        # 20m
+        if cutlineLayer is not None:
+            sds = gdal.Warp(
+                "/vsimem/in_memory_output.tif",
+                gdal.Open(self.datasets["20m"]["xml"]),
+                outputBounds=bounds,
+                dstSRS=dstcrs,
+                xRes=res,
+                yRes=res,
+                targetAlignedPixels=True,
+                cutlineLayer=cutlineLayer,
+                cropToCutline=True,
+                resampleAlg=gdal.GRA_Average,
+            )
+        else:
+            sds = gdal.Warp(
+                "/vsimem/in_memory_output.tif",
+                gdal.Open(self.datasets["20m"]["xml"]),
+                outputBounds=bounds,
+                dstSRS=dstcrs,
+                xRes=res,
+                yRes=res,
+                targetAlignedPixels=True,
+                resampleAlg=gdal.GRA_Average,
+            )
+        # prepare mask
+        transform = sds.GetGeoTransform()
+        cg = np.arange(
+            transform[0] + transform[1] // 2,
+            transform[0] + sds.RasterXSize * transform[1],
+            transform[1],
+        )
+        rg = np.arange(
+            transform[3] + transform[5] // 2,
+            transform[3] + sds.RasterYSize * transform[5],
+            transform[5],
+        )
+        xx, yy = np.meshgrid(cg, rg)
+        footpath = path.Path(np.array(footprint.exterior.xy).T)
+        mask = np.invert(
+            np.reshape(
+                footpath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
+                xx.shape,
+            )
+        )
+        # cutline
+        if cutlineLayer is not None:
+            with open(cutlineLayer) as f:
+                jsondata = json.load(f)
+            if "crs" in jsondata:
+                srccrs = pyproj.CRS(jsondata["crs"]["properties"]["name"])
             else:
-                sds = gdal.Warp(
-                    "/vsimem/in_memory_output.tif",
-                    gdal.Open(self.datasets["20m"]["xml"]),
-                    outputBounds=outputBounds,
-                    dstSRS=dstcrs,
-                    xRes=res,
-                    yRes=res,
-                    targetAlignedPixels=True,
-                    resampleAlg=gdal.GRA_Average,
-                )
-            # prepare mask
-            transform = sds.GetGeoTransform()
-            cg = np.arange(
-                transform[0] + transform[1] // 2,
-                transform[0] + sds.RasterXSize * transform[1],
-                transform[1],
+                srccrs = pyproj.CRS(self.datasets["20m"]["crs"])
+            dstcrs = pyproj.CRS(dstcrs)
+            clip = geometry.shape(jsondata["features"][0]["geometry"]).buffer(0)
+            if srccrs != dstcrs:
+                reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
+                clip = ops.transform(reproject, clip)
+            clippath = path.Path(np.array(clip.exterior.xy).T)
+            mask = np.logical_or(
+                mask,
+                np.invert(
+                    np.reshape(
+                        clippath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
+                        xx.shape,
+                    )
+                ),
             )
-            rg = np.arange(
-                transform[3] + transform[5] // 2,
-                transform[3] + sds.RasterYSize * transform[5],
-                transform[5],
-            )
-            xx, yy = np.meshgrid(cg, rg)
-            footpath = path.Path(np.array(footprint.exterior.xy).T)
-            mask = np.invert(
-                np.reshape(
-                    footpath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
-                    xx.shape,
-                )
-            )
-            # cutline
-            if cutlineLayer is not None:
-                with open(cutlineLayer) as f:
-                    jsondata = json.load(f)
-                if "crs" in jsondata:
-                    srcsrs = pyproj.CRS(jsondata["crs"]["properties"]["name"])
-                else:
-                    srcsrs = pyproj.CRS(self.datasets["20m"]["crs"])
-                dstcrs = pyproj.CRS(dstcrs)
-                clip = geometry.shape(jsondata["features"][0]["geometry"]).buffer(0)
-                if srcsrs != dstcrs:
-                    reproject = pyproj.Transformer.from_crs(srcsrs, dstcrs, always_xy=True).transform
-                    clip = ops.transform(reproject, clip)
-                clippath = path.Path(np.array(clip.exterior.xy).T)
-                mask = np.logical_or(
-                    mask,
-                    np.invert(
-                        np.reshape(
-                            clippath.contains_points(np.array([xx.ravel(), yy.ravel()]).T),
-                            xx.shape,
-                        )
-                    ),
-                )
-            # go
-            for band in ["B5", "B6", "B7", "B8A", "B11", "B12"]:
-                bmeta = self.datasets["20m"]["bands"][band].copy()
-                rb = sds.GetRasterBand(bmeta.pop("n"))
-                vals = rb.ReadAsArray().astype(np.int16)
-                if band == "B8A":
-                    if include8a:
-                        rasters.append(
-                            Band(
-                                "a8",
-                                np.ma.masked_array(vals, mask),
-                                sds.GetGeoTransform(),
-                                sds.GetProjection(),
-                            )
-                        )
-                        meta["a8"] = bmeta
-                else:
+        # go
+        for band in ["B5", "B6", "B7", "B8A", "B11", "B12"]:
+            bmeta = self.datasets["20m"]["bands"][band].copy()
+            rb = sds.GetRasterBand(bmeta.pop("n"))
+            vals = rb.ReadAsArray().astype(np.int16)
+            if band == "B8A":
+                if include8a:
                     rasters.append(
                         Band(
-                            band.lower(),
+                            "a8",
                             np.ma.masked_array(vals, mask),
                             sds.GetGeoTransform(),
                             sds.GetProjection(),
                         )
                     )
-                    meta[band.lower()] = bmeta
-            # 10 m
-            if cutlineLayer is not None:
-                sds = gdal.Warp(
-                    "/vsimem/in_memory_output.tif",
-                    gdal.Open(self.datasets["10m"]["xml"]),
-                    outputBounds=outputBounds,
-                    dstSRS=dstcrs,
-                    xRes=res,
-                    yRes=res,
-                    targetAlignedPixels=True,
-                    cutlineLayer=cutlineLayer,
-                    cropToCutline=True,
-                    resampleAlg=gdal.GRA_Average,
-                )
+                    meta["a8"] = bmeta
             else:
-                sds = gdal.Warp(
-                    "/vsimem/in_memory_output.tif",
-                    gdal.Open(self.datasets["10m"]["xml"]),
-                    outputBounds=outputBounds,
-                    dstSRS=dstcrs,
-                    xRes=res,
-                    yRes=res,
-                    targetAlignedPixels=True,
-                    resampleAlg=gdal.GRA_Average,
-                )
-            for band in ["B4", "B3", "B2", "B8"]:
-                bmeta = self.datasets["10m"]["bands"][band].copy()
-                rb = sds.GetRasterBand(bmeta.pop("n"))
-                vals = rb.ReadAsArray().astype(np.int16)
                 rasters.append(
                     Band(
                         band.lower(),
@@ -561,7 +593,45 @@ class SAFE:
                     )
                 )
                 meta[band.lower()] = bmeta
-            return S2(*rasters, meta=meta, name=name)
+        # 10 m
+        if cutlineLayer is not None:
+            sds = gdal.Warp(
+                "/vsimem/in_memory_output.tif",
+                gdal.Open(self.datasets["10m"]["xml"]),
+                outputBounds=bounds,
+                dstSRS=dstcrs,
+                xRes=res,
+                yRes=res,
+                targetAlignedPixels=True,
+                cutlineLayer=cutlineLayer,
+                cropToCutline=True,
+                resampleAlg=gdal.GRA_Average,
+            )
+        else:
+            sds = gdal.Warp(
+                "/vsimem/in_memory_output.tif",
+                gdal.Open(self.datasets["10m"]["xml"]),
+                outputBounds=bounds,
+                dstSRS=dstcrs,
+                xRes=res,
+                yRes=res,
+                targetAlignedPixels=True,
+                resampleAlg=gdal.GRA_Average,
+            )
+        for band in ["B4", "B3", "B2", "B8"]:
+            bmeta = self.datasets["10m"]["bands"][band].copy()
+            rb = sds.GetRasterBand(bmeta.pop("n"))
+            vals = rb.ReadAsArray().astype(np.int16)
+            rasters.append(
+                Band(
+                    band.lower(),
+                    np.ma.masked_array(vals, mask),
+                    sds.GetGeoTransform(),
+                    sds.GetProjection(),
+                )
+            )
+            meta[band.lower()] = bmeta
+        return S2(*rasters, meta=meta, name=name)
 
 
 class S2:
@@ -577,6 +647,10 @@ class S2:
         name (str): mame of collection. Default is 'S2'
         meta (dict): Dictionary with metadata. Default is {}
 
+    Attributes:
+        transform (tuple): 6 coefficients geotransform. Rotation not supported
+        projection (str): CRS in WKT
+
     Examples:
         To acceess band, just use band name
 
@@ -589,9 +663,13 @@ class S2:
     """
 
     def __init__(self, *rasters, **kwargs):
+        assert len(set([b.transform for b in rasters])) == 1, 'All bands must have same transform'
+        assert len(set([b.projection for b in rasters])) == 1, 'All bands must have same projection'
         self._bands = rasters
         self.meta = kwargs.get("meta", {})
         self.name = kwargs.get("name", "S2")
+        self.transform = rasters[0].transform
+        self.projection = rasters[0].projection
         for b in rasters:
             self.__dict__[b.name] = b
 
@@ -603,14 +681,57 @@ class S2:
         """list: Sorted list of band names"""
         return sorted([k.name for k in self._bands])
 
+    def patch(self, other, fit=False):
+        """Patch collection
+
+        All masked regions are patched from other
+
+        Args:
+            other: `s2lx.S2` collection
+
+        Keyword Args:
+            fit (bool): If True, the patching dataset bands are linearly
+                scaled to fit in overlapping region. Default False
+
+        Returns:
+            `s2lx.S2` collection
+
+        """
+        assert self.transform == other.transform, "transform must be identical"
+        assert self.projection == other.projection, "projection must be identical"
+
+        return S2(*(a.patch(b, fit=fit) for (a, b) in zip(self._bands, other._bands)), meta=self.meta, name=f'{self.name}+{other.name}')
+
     def restored_pca(self, **kwargs):
-        """PCA based filtering"""
-        remove = kwargs.get("remove", ())
-        if isinstance(remove, int):
-            remove = (remove,)
+        """PCA based filtering
+
+        Use PCA components with cumulative explained variance given
+        by treshold. Aternatively, PCA components to be excluded from
+        reconstruction could be defined.
+
+        Keyword Args:
+            remove (int or list): PCA components to be removed
+            threshold (float): Threshold of explained variance
+                in percents to be reconstructed. Default 98.
+
+        Returns:
+            `s2lx.S2` collection. Components, explained variance and
+                explained variance ratio are available in metadata
+
+        """
         X = np.array([b.values for b in self._bands]).T
         pca = decomposition.PCA(n_components=len(self._bands))
         y_pred = pca.fit_transform(X)
+        # manage kwargs
+        remove = kwargs.get("remove", None)
+        if remove is None:
+            threshold = kwargs.get("threshold", 98)
+            last_c = np.where(100 * np.cumsum(pca.explained_variance_ratio_) > threshold)[0][0]
+            print(f'Using {last_c + 1} components')
+            remove = np.arange(0, last_c + 1)
+        if isinstance(remove, int):
+            remove = (remove,)
+        # go
         for r in remove:
             y_pred[:, r] = 0
         restored = pca.inverse_transform(y_pred)
@@ -627,12 +748,25 @@ class S2:
         return S2(*rasters, meta=meta, name=self.name + " PCA restored")
 
     def pca(self, **kwargs):
-        """PCA analysis"""
+        """PCA analysis
+
+        Calculate principal components from all bands in collection
+
+        Keyword Args:
+            centered (bool): If True values are centered
+            n (int): Number of pricipal components calculated.
+                Default is number of bands.
+
+        Returns:
+            `s2lx.S2` collection. Components, explained variance and
+                explained variance ratio are available in metadata
+
+        """
         centered = kwargs.get("centered", True)
         n = kwargs.get("n", len(self._bands))
         X = np.array([b.values for b in self._bands]).T
         if centered:
-            X -= X.mean(axis=0)
+            X = X - X.mean(axis=0)
         pca = decomposition.PCA(n_components=n)
         y_pred = pca.fit_transform(X)
         rasters = []
@@ -651,7 +785,8 @@ class S2:
 class Band:
     """Class to store band data
 
-    Band is internally stores as masked array tu support ROI operations
+    Raster band, internally stored as masked array, to support ROI operations.
+    Bands support basic mathematical operations.
 
     Args:
         name (str): name of the band. Name must start with a letter or the
@@ -683,12 +818,23 @@ class Band:
         return txt
 
     def copy(self, **kwargs):
+        """Create copy of band
+
+        Transform and projection is not changed.
+
+        Keyword Args:
+            name (str): New name. Default is original one
+            array (numpy.ma.array): New data. De3fault is original one
+
+        """
         name = kwargs.get("name", self.name)
         array = kwargs.get("array", self.array).copy()
+        assert array.shape == self.array.shape, f'Shape of array {array.shape} must be same as original {self.array.shape}'
         return Band(name, array, self.transform, self.projection)
 
     @property
     def values(self):
+        """numpy.array: Return 1D array of non-masked values from band"""
         return self.array[np.invert(self.array.mask)].data
 
     def __array__(self, dtype=None):
@@ -798,34 +944,75 @@ class Band:
 
     @property
     def dtype(self):
+        """numpy.dtype: type of data in band"""
         return self.array.dtype
 
     def astype(self, dtype):
+        """Convert band to other dtype
+
+        Args:
+            dtype: numpy dtype
+
+        Returns:
+            `s2lx.Band` raster band
+
+        """
         return self.copy(array=self.array.astype(dtype))
 
     @property
     def min(self):
+        """Returns minimum of data"""
         return self.array.min()
 
     @property
     def max(self):
+        """Returns maximum of data"""
         return self.array.max()
 
     @property
     def norm(self):
+        """Returns matplotlib.colors.Normalize usong vmin, vmax properties"""
         return colors.Normalize(vmin=self.vmin, vmax=self.vmax, clip=True)
 
     @property
     def normalized(self):
+        """Returns normalized raster values as numpy.array"""
         return self.norm(self.array)
 
     def apply(self, fun):
+        """Apply function to raster data
+
+        You can use pre-defined filters from `s2lx.s2filters`, but any other
+        function accepting 2D numpy array could be used.
+
+        Args:
+            fun: function
+
+        Returns:
+            `s2lx.Band` raster band with new values
+
+        """
         sname = f"{fun.__name__}" + f"({self.name})"
-        vals = self.array.copy()
-        vals[np.invert(self.array.mask)] = fun(self.values)
-        return self.copy(array=vals, name=sname)
+        fvals = np.ma.masked_array(fun(self.array.data), mask=self.array.mask)
+        return self.copy(array=fvals, name=sname)
 
     def patch(self, other, fit=False):
+        """Patch bands
+
+        All masked data are patched from other band. Both bands must have
+        same transform and projection.
+
+        Args:
+            other: `s2lx.Band` raster
+
+        Keyword Args:
+            fit (bool): If True, the patching dataset bands are linearly
+                scaled to fit in overlapping region. Default False
+
+        Returns:
+            `s2lx.Band` patched raster band
+
+        """
         assert self.transform == other.transform, "transform must be identical"
         assert self.projection == other.projection, "projection must be identical"
         vals = np.array(self.array)
@@ -840,6 +1027,19 @@ class Band:
         return self.copy(array=np.ma.masked_array(vals, mask))
 
     def intersect(self, other):
+        """Intersect bands
+
+        Returns tuple of two bands with all values masked except
+        intersecting region. Both bands must have same transform
+        and projection.
+
+        Args:
+            other: `s2lx.Band` raster
+
+        Returns:
+            tuple of two `s2lx.Band` raster bands
+
+        """
         assert self.transform == other.transform, "transform must be identical"
         assert self.projection == other.projection, "projection must be identical"
         mask1 = np.array(self.array.mask)
@@ -852,7 +1052,18 @@ class Band:
         return b1, b2
 
     def show(self, **kwargs):
-        # parse kwargs
+        """Show band
+
+        Create matplotlib figure with raster band data and colorbar.
+
+        Keyword Args:
+            figsize (tuple): figure size. Default is matplotlib defaults
+            cmap: matplotlib color map. Default 'cividis'
+            under (color): color used for values under vmin. Default cmap(0)
+            over (color): color used for values above vmax. Default cmap(1)
+            masked (color): color used for masked values. Default 'white'
+
+        """
         figsize = kwargs.get("figsize", plt.rcParams["figure.figsize"])
         cmap = plt.get_cmap(kwargs.get("cmap", "cividis"))
         cmap.set_under(kwargs.get("under", cmap(0.0)))
@@ -869,7 +1080,13 @@ class Band:
         f.tight_layout()
         plt.show()
 
-    def save(self, filename, **kwargs):
+    def save(self, filename):
+        """Save band as GeoTIFF
+
+        Args:
+            filename (str): GeoTIFF filename
+
+        """
         # save
         if filename.lower().endswith(".tif"):
             driver_gtiff = gdal.GetDriverByName("GTiff")
@@ -930,7 +1147,14 @@ class Composite:
             return np.dstack((self.r, self.g, self.b)).astype(dtype)
 
     def show(self, **kwargs):
-        # parse kwargs
+        """Show RGB composite
+
+        Create matplotlib figure with RGB composite.
+
+        Keyword Args:
+            figsize (tuple): figure size. Default is matplotlib defaults
+
+        """
         figsize = kwargs.get("figsize", plt.rcParams["figure.figsize"])
         rgb = np.dstack((self.r.normalized, self.g.normalized, self.b.normalized))
         # plot
@@ -941,8 +1165,15 @@ class Composite:
         f.tight_layout()
         plt.show()
 
-    def save(self, filename, **kwargs):
-        # save
+    def save(self, filename):
+        """Save RGB composite as RGBA GeoTIFF
+
+        Alpha channel is generated from mask of bands.
+
+        Args:
+            filename (str): GeoTIFF filename
+
+        """
         if filename.lower().endswith(".tif"):
             driver_gtiff = gdal.GetDriverByName("GTiff")
             options = ["PHOTOMETRIC=RGB", "PROFILE=GeoTIFF"]

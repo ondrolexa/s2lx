@@ -15,44 +15,43 @@ __all__ = [
 
 
 def median_filter(**kwargs):
-    radius = kwargs.pop("radius", 3)
-    kwargs["footprint"] = disk(radius)
+    radius = kwargs.get("radius", 3)
 
     def median(x):
-        return ndimage.median_filter(x, **kwargs)
+        return ndimage.median_filter(x, footprint=disk(radius))
 
     return median
 
 
-def gaussian_filter(sigma, **kwargs):
+def gaussian_filter(sigma):
     def gaussian(x):
-        return ndimage.gaussian_filter(x, sigma, **kwargs)
+        return ndimage.gaussian_filter(x, sigma)
 
     return gaussian
 
 
-def gaussian_laplace_filter(sigma, **kwargs):
+def gaussian_laplace_filter(sigma):
     def gaussian_laplace(x):
-        return ndimage.gaussian_laplace(x, sigma, **kwargs)
+        return ndimage.gaussian_laplace(x, sigma)
 
     return gaussian_laplace
 
 
-def laplace_filter(**kwargs):
+def laplace_filter():
     def laplace(x):
         return ndimage.laplace(x)
 
     return laplace
 
 
-def sobel_filter(**kwargs):
+def sobel_filter():
     def sobel(x):
         return ndimage.sobel(x)
 
     return sobel
 
 
-def prewitt_filter(**kwargs):
+def prewitt_filter():
     def prewitt(x):
         return ndimage.prewitt(x)
 
@@ -60,11 +59,10 @@ def prewitt_filter(**kwargs):
 
 
 def majority_filter(**kwargs):
-    radius = kwargs.pop("radius", 3)
-    kwargs["footprint"] = disk(radius)
+    radius = kwargs.get("radius", 3)
 
     def majority(x):
-        return rank.majority(x, **kwargs)
+        return rank.majority(x, footprint=disk(radius))
 
     return majority
 
