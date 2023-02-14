@@ -39,6 +39,7 @@ extensions = [
     'sphinx.ext.mathjax',
     'matplotlib.sphinxext.plot_directive',
     'sphinx.ext.napoleon',
+    'sphinx_mdinclude'
 ]
 
 # Configuration options for plot_directive. See:

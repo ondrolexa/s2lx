@@ -1,7 +1,13 @@
 # s2lx - simple Sentinel-2 tools
 
 [![main](https://github.com/ondrolexa/s2lx/actions/workflows/master.yml/badge.svg)](https://github.com/ondrolexa/s2lx/actions/workflows/master.yml)
+[![Documentation](https://readthedocs.org/projects/apsg/badge/?version=stable)](https://apsg.readthedocs.io/en/stable/?badge=stable)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/ondrolexa/s2lx/blob/master/LICENSE)
+
+## What is s2lx
+
+s2lx is a python toolbox to simplify explorative work with Sentinel-2 multispectral imagery. It allows quickly extract data from region of interest,
+easily manipulate a test processing and visualiztion strategies. In addition, it could be used for quick merging and reprojecting of data.
 
 ## How to install
 
@@ -23,68 +29,9 @@ To upgrade an already installed **s2lx** to the latest release:
 
     pip install --upgrade https://github.com/ondrolexa/s2lx/archive/master.zip
 
-## Example
+## Documentation
 
-Download Sentinel-2 Level-2A or Level-1C product from Copernicus Open Access Hub in SAFE format and unzip. Now import `s2lx`:
-
-    from s2lx import *
-
-Open SAFE data:
-
-    s = SAFE('/path/to/safename.SAFE/MTD_MSIL2A.xml')
-
-You can preview whole scene:
-
-    s.preview()
-
-Clip region of interest (note that bounds are defined in coordinate system of scene) and store in `S2` collection:
-
-    >>> bounds = (440000, 5093000, 494000, 5123000)  # (minx, miny, maxx, maxy)
-    >>> d = s.clip(bounds, name='My Region')
-
-To see the list of bands:
-
-    >>> d.bands
-    ['b11', 'b12', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8']
-
-Individual bands could ba accessed as properties:
-
-    >>> d.b4.show()
-
-You can use `Composite` class to create RGB composite:
-
-    >>> rgb = Composite(d.b4, d.b3, d.b2, name='True Color')
-    >>> rgb.show()
-
-Bands and composites could be saved to GeoTIFF with `save` method:
-
-    >>> d.b4.save('b4.tif')
-    >>> rgb.save('truecolor.tif')
-
-Bands support simple mathematical operations (addition, subtraction, division, multiplication)
-
-    >>> alt = Composite(d.b11/d.b12, d.b4/d.b2, d.b4/d.b11, name='Alterations')
-    >>> alt.show()
-
-Bands could be filtered (check `s2lx.s2filters` for possible filters):
-
-    >>> medfilter = median_filter(radius=4)
-    >>> b12f = d.b12.apply(medfilter)
-
-You can do PCA analysis using `S2.pca` method:
-
-    >>> p = d.pca()
-
-To create RGB composite from first three principal components:
-
-    >>> pca = Composite(p.pc0, p.pc1, p.pc4, name='PCA')
-    >>> pca.show()
-
-You can use also PCA to filter your data, i.,e. use only few PC to reconstruct dataset. Here we remove last four (from 9) components with lowest explained variance and reconstruct all bands:
-
-    >>> r = d.restored_pca(remove=(5,6,7,8))
-    >>> altr = Composite(r.b11/r.b12, r.b4/r.b2, r.b4/r.b11, name='Alterations filtered')
-    >>> altr.show()
+Check [documentation](https://s2lx.readthedocs.io/en/latest/) for more details and examples.
 
 ## License
 
