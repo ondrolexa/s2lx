@@ -99,23 +99,34 @@ class SAFE:
 
         Keyword Args:
             figsize (tuple): matplotlib Figure size
+            filename(str): if not None, the plot is save to file.
+                Default None
+            dpi (int): DPI for save image. Default 300
 
         """
         sds = gdal.Open(self.datasets["TCI"]["xml"])
-        tci = np.dstack(
-            (
-                sds.GetRasterBand(self.datasets["TCI"]["bands"]["B4"]["n"]).ReadAsArray(),
-                sds.GetRasterBand(self.datasets["TCI"]["bands"]["B3"]["n"]).ReadAsArray(),
-                sds.GetRasterBand(self.datasets["TCI"]["bands"]["B2"]["n"]).ReadAsArray(),
-            )
-        )
+        r = sds.GetRasterBand(self.datasets["TCI"]["bands"]["B4"]["n"]).ReadAsArray()
+        g = sds.GetRasterBand(self.datasets["TCI"]["bands"]["B3"]["n"]).ReadAsArray()
+        b = sds.GetRasterBand(self.datasets["TCI"]["bands"]["B2"]["n"]).ReadAsArray()
+        tci = np.dstack((r, g, b))
+        transform=sds.GetGeoTransform()
+        projection=sds.GetProjection()
         figsize = kwargs.get("figsize", plt.rcParams["figure.figsize"])
         # plot
         f, ax = plt.subplots(figsize=figsize)
-        ax.imshow(tci)
-        ax.set_title(self.meta["PRODUCT_URI"].split('_')[5])
+        extent = (
+            transform[0],
+            transform[0] + r.shape[1]*transform[1],
+            transform[3] + r.shape[0]*transform[5],
+            transform[3]
+            )
+        ax.imshow(tci, extent=extent)
+        ax.set_title(f"{self.meta['PRODUCT_URI'].split('_')[5]} {pyproj.CRS(projection).name}")
         ax.set_aspect(1)
+        filename = kwargs.get('filename', None)
         f.tight_layout()
+        if filename is not None:
+            f.savefig(filename, dpi=kwargs.get('dpi', 300))
         plt.show()
 
     @property
@@ -1058,6 +1069,9 @@ class Band:
 
         Keyword Args:
             figsize (tuple): figure size. Default is matplotlib defaults
+            filename(str): if not None, the plot is save to file.
+                Default None
+            dpi (int): DPI for save image. Default 300
             cmap: matplotlib color map. Default 'cividis'
             under (color): color used for values under vmin. Default cmap(0)
             over (color): color used for values above vmax. Default cmap(1)
@@ -1071,13 +1085,22 @@ class Band:
         cmap.set_bad(kwargs.get("masked", "white"))
         # plot
         f, ax = plt.subplots(figsize=figsize)
-        img = ax.imshow(self.array, cmap=cmap, norm=self.norm)
-        ax.set_title(f"{self.name}")
+        extent = (
+            self.transform[0],
+            self.transform[0] + self.shape[1]*self.transform[1],
+            self.transform[3] + self.shape[0]*self.transform[5],
+            self.transform[3]
+            )
+        img = ax.imshow(self.array, cmap=cmap, norm=self.norm, extent=extent)
+        ax.set_title(f"{self.name} {pyproj.CRS(self.projection).name}")
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
         f.colorbar(img, cax=cax, extend="both")
         ax.set_aspect(1)
+        filename = kwargs.get('filename', None)
         f.tight_layout()
+        if filename is not None:
+            f.savefig(filename, dpi=kwargs.get('dpi', 300))
         plt.show()
 
     def save(self, filename):
@@ -1153,16 +1176,28 @@ class Composite:
 
         Keyword Args:
             figsize (tuple): figure size. Default is matplotlib defaults
+            filename(str): if not None, the plot is save to file.
+                Default None
+            dpi (int): DPI for save image. Default 300
 
         """
         figsize = kwargs.get("figsize", plt.rcParams["figure.figsize"])
         rgb = np.dstack((self.r.normalized, self.g.normalized, self.b.normalized))
         # plot
         f, ax = plt.subplots(figsize=figsize)
-        ax.imshow(rgb)
-        ax.set_title(f"{self.name} [{self.r.name} {self.g.name} {self.b.name}]")
+        extent = (
+            self.transform[0],
+            self.transform[0] + self.shape[1]*self.transform[1],
+            self.transform[3] + self.shape[0]*self.transform[5],
+            self.transform[3]
+            )
+        ax.imshow(rgb, extent=extent)
+        ax.set_title(f"{self.name} [{self.r.name} {self.g.name} {self.b.name}] {pyproj.CRS(self.projection).name}")
         ax.set_aspect(1)
+        filename = kwargs.get('filename', None)
         f.tight_layout()
+        if filename is not None:
+            f.savefig(filename, dpi=kwargs.get('dpi', 300))
         plt.show()
 
     def save(self, filename):
