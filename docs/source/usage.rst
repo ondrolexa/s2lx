@@ -6,7 +6,7 @@ Start by downloading Sentinel-2 Level-2A or Level-1C product in SAFE format (e.g
 
 .. code-block:: python
 
-    from s2lx import *
+    >>> from s2lx import *
 
 Open SAFE data:
 
