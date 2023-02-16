@@ -2,7 +2,7 @@
 Usage
 =====
 
-Start by downloading Sentinel-2 Level-2A or Level-1C product from Copernicus Open Access Hub in SAFE format and unzip. Now import `s2lx`:
+Start by downloading Sentinel-2 Level-2A or Level-1C product in SAFE format (e.g. from |COAH| and unzip. Open Python prompt in *s2lx* environment and import classes from `s2lx`:
 
 .. code-block:: python
 
@@ -123,3 +123,7 @@ You can use also PCA to filter your data, i.,e. use only few PC to reconstruct d
 .. image:: images/altrpca.png
   :width: 640
   :alt: rgb composite from pca filtered bands
+
+.. |COAH| raw:: html
+
+   <a href="https://scihub.copernicus.eu" target="_blank">Copernicus Open Access Hub</a>
