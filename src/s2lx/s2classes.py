@@ -464,6 +464,7 @@ class SAFE:
                 name=name,
                 include8a=include8a,
                 cutlineLayer=filename,
+                driverName=driverName
             )
         else:
             return self.warp(clip.bounds, dstcrs, name=name, include8a=include8a)
@@ -476,6 +477,7 @@ class SAFE:
         name="Clip",
         include8a=False,
         cutlineLayer=None,
+        driverName='GeoJSON'
     ):
         """Reproject and clip scene by by coordinates
 
@@ -557,15 +559,14 @@ class SAFE:
         )
         # cutline
         if cutlineLayer is not None:
-            ### FIX NEEDED FOR NON GEOJSON FILES ###
-            with open(cutlineLayer) as f:
-                jsondata = json.load(f)
-            if "crs" in jsondata:
-                srccrs = pyproj.CRS(jsondata["crs"]["properties"]["name"])
-            else:
-                srccrs = pyproj.CRS(self.datasets["20m"]["crs"])
-            dstcrs = pyproj.CRS(dstcrs)
-            clip = geometry.shape(jsondata["features"][0]["geometry"]).buffer(0)
+            driver = ogr.GetDriverByName(driverName)
+            ds = driver.Open(cutlineLayer, 0)
+            layer = ds.GetLayer()
+            try:
+                srccrs = pyproj.CRS.from_wkt(layer.GetSpatialRef().ExportToWkt())
+            except pyproj.exceptions.CRSError:
+                srccrs = self.crs
+            clip = ops.unary_union([wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer])
             if srccrs != dstcrs:
                 reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
                 clip = ops.transform(reproject, clip)
