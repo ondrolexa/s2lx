@@ -463,7 +463,7 @@ class SAFE:
                 dstcrs,
                 name=name,
                 include8a=include8a,
-                cutlineLayer=geojson,
+                cutlineLayer=filename,
             )
         else:
             return self.warp(clip.bounds, dstcrs, name=name, include8a=include8a)
@@ -557,6 +557,7 @@ class SAFE:
         )
         # cutline
         if cutlineLayer is not None:
+            ### FIX NEEDED FOR NON GEOJSON FILES ###
             with open(cutlineLayer) as f:
                 jsondata = json.load(f)
             if "crs" in jsondata:
@@ -1079,12 +1080,16 @@ class Band:
 
         """
         figsize = kwargs.get("figsize", plt.rcParams["figure.figsize"])
+        showproj = kwargs.get("showproj", True)
         cmap = plt.get_cmap(kwargs.get("cmap", "cividis"))
         cmap.set_under(kwargs.get("under", cmap(0.0)))
         cmap.set_over(kwargs.get("over", cmap(1.0)))
         cmap.set_bad(kwargs.get("masked", "white"))
         # plot
-        f, ax = plt.subplots(figsize=figsize)
+        if "ax" in kwargs:
+            ax = kwargs.get("ax")
+        else:
+            f, ax = plt.subplots(figsize=figsize)
         extent = (
             self.transform[0],
             self.transform[0] + self.shape[1]*self.transform[1],
@@ -1092,16 +1097,20 @@ class Band:
             self.transform[3]
             )
         img = ax.imshow(self.array, cmap=cmap, norm=self.norm, extent=extent)
-        ax.set_title(f"{self.name} {pyproj.CRS(self.projection).name}")
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.05)
-        f.colorbar(img, cax=cax, extend="both")
+        if showproj:
+            ax.set_title(f"{self.name} {pyproj.CRS(self.projection).name}")
+        else:
+            ax.set_title(f"{self.name}")
         ax.set_aspect(1)
-        filename = kwargs.get('filename', None)
-        f.tight_layout()
-        if filename is not None:
-            f.savefig(filename, dpi=kwargs.get('dpi', 300))
-        plt.show()
+        if "ax" not in kwargs:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.05)
+            f.colorbar(img, cax=cax, extend="both")
+            filename = kwargs.get('filename', None)
+            f.tight_layout()
+            if filename is not None:
+                f.savefig(filename, dpi=kwargs.get('dpi', 300))
+            plt.show()
 
     def save(self, filename):
         """Save band as GeoTIFF
@@ -1182,9 +1191,13 @@ class Composite:
 
         """
         figsize = kwargs.get("figsize", plt.rcParams["figure.figsize"])
+        showproj = kwargs.get("showproj", True)
         rgb = np.dstack((self.r.normalized, self.g.normalized, self.b.normalized))
         # plot
-        f, ax = plt.subplots(figsize=figsize)
+        if "ax" in kwargs:
+            ax = kwargs.get("ax")
+        else:
+            f, ax = plt.subplots(figsize=figsize)
         extent = (
             self.transform[0],
             self.transform[0] + self.shape[1]*self.transform[1],
@@ -1192,13 +1205,17 @@ class Composite:
             self.transform[3]
             )
         ax.imshow(rgb, extent=extent)
-        ax.set_title(f"{self.name} [{self.r.name} {self.g.name} {self.b.name}] {pyproj.CRS(self.projection).name}")
+        if showproj:
+            ax.set_title(f"{self.name} [{self.r.name} {self.g.name} {self.b.name}] {pyproj.CRS(self.projection).name}")
+        else:
+            ax.set_title(f"{self.name} [{self.r.name} {self.g.name} {self.b.name}]")
         ax.set_aspect(1)
-        filename = kwargs.get('filename', None)
-        f.tight_layout()
-        if filename is not None:
-            f.savefig(filename, dpi=kwargs.get('dpi', 300))
-        plt.show()
+        if "ax" not in kwargs:
+            filename = kwargs.get('filename', None)
+            f.tight_layout()
+            if filename is not None:
+                f.savefig(filename, dpi=kwargs.get('dpi', 300))
+            plt.show()
 
     def save(self, filename):
         """Save RGB composite as RGBA GeoTIFF
