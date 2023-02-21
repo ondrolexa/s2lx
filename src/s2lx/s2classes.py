@@ -240,10 +240,59 @@ class SAFE:
         driver = ogr.GetDriverByName(driverName)
         ds = driver.Open(filename, 0)
         layer = ds.GetLayer()
-        extent = layer.GetExtent()
-        bounds = (extent[0], extent[2], extent[1], extent[3])
+        #
+        try:
+            srccrs = pyproj.CRS.from_wkt(layer.GetSpatialRef().ExportToWkt())
+        except pyproj.exceptions.CRSError:
+            srccrs = self.crs
+        dstcrs = self.crs
+        # to do
+        clip = ops.unary_union([wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer])
+        if srccrs != dstcrs:
+            reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
+            clip = ops.transform(reproject, clip)
+        #
+        #extent = layer.GetExtent()
+        #bounds = (extent[0], extent[2], extent[1], extent[3])
+        bounds = clip.bounds
         return self.clip(
             bounds,
+            res=res,
+            name=name,
+            include8a=include8a,
+        )
+
+    def clip_shape(self, shape, srccrs=None, res=20, name="Clip", include8a=False):
+        """Clip scene to features extent in vector file
+
+        Clip all bands in scene by bounding box of shapely polygon. All bands
+        in resulting collection have same resolution. For res=20, the '10m'
+        dataset bands are downsampled, while for res=10, the bands of '20m'
+        dataset are upsampled.
+
+        Args:
+            shape: shapely polygon
+
+        Keyword Args:
+            srccrs(str or pyproj.CRS): shape coordinate system. Default
+                is CRS of scene
+            res (int): resolution of clipped bands. Default 20
+            name (str): name of collection. Default is 'Clip'
+            include8a (bool): whether to include B8A band. Dafault False
+
+        Returns:
+            `s2lx.S2` collection
+
+        """
+        if srccrs is None:
+            srccrs = self.crs
+        else:
+            srccrs = pyproj.CRS(srccrs)
+        if srccrs != self.crs:
+            reproject = pyproj.Transformer.from_crs(srccrs, self.crs, always_xy=True).transform
+            shape = ops.transform(reproject, shape)
+        return self.clip(
+            shape.bounds,
             res=res,
             name=name,
             include8a=include8a,
@@ -469,6 +518,44 @@ class SAFE:
         else:
             return self.warp(clip.bounds, dstcrs, name=name, include8a=include8a)
 
+    def warp_shape(self, shape, srccrs=None, dstcrs=None, res=20, name="Clip", include8a=False):
+        """Reproject and clip scene to extent of features in vector file
+
+        Reproject all bands in scene to target CRS and clip to bounding box of
+        shapely polygon. All bands in resulting collection have same resolution.
+        For res=20, the '10m' dataset bands are downsampled, while for res=10,
+        the bands of '20m' dataset are upsampled.
+
+        Args:
+            shape (str): filename of vector file
+
+        Keyword Args:
+            srccrs(str or pyproj.CRS): shape coordinate system. Default
+                is CRS of scene
+            dstcrs(str or pyproj.CRS): target coordinate system. Default
+                is srccrs
+            res (int): resolution of clipped bands. Default 20
+            name (str): name of collection. Default is 'Clip'
+            include8a (bool): whether to include B8A band. Default False
+
+        Returns:
+            `s2lx.S2` collection
+
+        """
+        if srccrs is None:
+            srccrs = self.crs
+        else:
+            srccrs = pyproj.CRS(srccrs)
+        if dstcrs is None:
+            dstcrs = srccrs
+        else:
+            dstcrs = pyproj.CRS(dstcrs)
+        # to do
+        if srccrs != dstcrs:
+            reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
+            shape = ops.transform(reproject, shape)
+        return self.warp(shape.bounds, dstcrs, name=name, include8a=include8a)
+
     def warp(
         self,
         bounds,
@@ -500,6 +587,10 @@ class SAFE:
             res (int): resolution of clipped bands. Default 20
             name (str): name of collection. Default is 'Clip'
             include8a (bool): whether to include B8A band. Dafault False
+            cutlineLayer (str): filename of vector file. Default None
+                All pixels out of cutlineLayer are masked
+            driverName (str): format of vector file. Default is 'GeoJSON'
+                For available options see `ogr2ogr --formats`
 
         Returns:
             `s2lx.S2` collection
