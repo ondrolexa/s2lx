@@ -22,7 +22,7 @@ jobs:
           python-version: 3.9
           activate-environment: pyps
           auto-activate-base: false
-          environment-file: gh-environment.yml
+          environment-file: environment-gha.yml
           use-mamba: true
 
       - name: Lint with flake8

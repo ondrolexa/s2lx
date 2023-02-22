@@ -11,6 +11,8 @@ dependencies:
   - gdal
   - shapely>=2
   - pyproj
+  - mercantile
+  - geojson
   - scikit-image
   - scikit-learn
   - sphinx

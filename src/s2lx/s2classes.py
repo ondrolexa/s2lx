@@ -900,6 +900,12 @@ class Band:
         transform (tuple): 6 coefficients geotransform. Rotation not supported
         projection (str): CRS in WKT
 
+    Keyword Args:
+        vmin (float): minimum value for color normalization.
+            Default 2 percentile
+        vmax (float): maximum value for color normalization.
+            Default 98 percentile
+
     Attributes:
         shape (tuple): shape of raster array
         vmin (float): minimum value used for colorscale. Default 2% percentile
@@ -907,14 +913,14 @@ class Band:
 
     """
 
-    def __init__(self, name, array, transform, projection):
+    def __init__(self, name, array, transform, projection, **kwargs):
         self.array = array
         self.name = name
         self.transform = transform
         self.projection = projection
         self.shape = array.shape
-        self.vmin = np.nanpercentile(self.values, 2)
-        self.vmax = np.nanpercentile(self.values, 98)
+        self.vmin = kwargs.get("vmin", np.nanpercentile(self.values, 2))
+        self.vmax = kwargs.get("vmax", np.nanpercentile(self.values, 98))
 
     def __repr__(self):
         txt = f"Band {self.name} {self.shape} {self.dtype}\n"
@@ -935,6 +941,19 @@ class Band:
         array = kwargs.get("array", self.array).copy()
         assert array.shape == self.array.shape, f'Shape of array {array.shape} must be same as original {self.array.shape}'
         return Band(name, array, self.transform, self.projection)
+
+    def setnorm(self, **kwargs):
+        """Set color normalization minimum a maximum
+
+        Keyword Args:
+            vmin (float): minimum value for color normalization.
+                Default 2 percentile
+            vmax (float): maximum value for color normalization.
+                Default 98 percentile
+
+        """
+        self.vmin = kwargs.get("vmin", np.nanpercentile(self.values, 2))
+        self.vmax = kwargs.get("vmax", np.nanpercentile(self.values, 98))
 
     @property
     def values(self):
@@ -1075,7 +1094,7 @@ class Band:
 
     @property
     def norm(self):
-        """Returns matplotlib.colors.Normalize usong vmin, vmax properties"""
+        """Returns matplotlib.colors.Normalize using vmin, vmax properties"""
         return colors.Normalize(vmin=self.vmin, vmax=self.vmax, clip=True)
 
     @property
@@ -1204,22 +1223,30 @@ class Band:
                 f.savefig(filename, dpi=kwargs.get('dpi', 300))
             plt.show()
 
-    def save(self, filename):
+    def save(self, filename, overviews=False):
         """Save band as GeoTIFF
 
         Args:
             filename (str): GeoTIFF filename
 
+        Keyword Args:
+            overviews (bool): build overviews when True. Default False
+
         """
         # save
         if filename.lower().endswith(".tif"):
             driver_gtiff = gdal.GetDriverByName("GTiff")
+            options = [
+                "BIGTIFF=IF_NEEDED", "COMPRESS=DEFLATE", "PROFILE=GeoTIFF",
+                "TILED=YES", "NUM_THREADS=ALL_CPUS"
+                ]
             ds_create = driver_gtiff.Create(
                 filename,
                 xsize=self.shape[1],
                 ysize=self.shape[0],
                 bands=1,
                 eType=gdal_array.NumericTypeCodeToGDALTypeCode(self.dtype),
+                options=options,
             )
             ds_create.SetProjection(self.projection)
             ds_create.SetGeoTransform(self.transform)
@@ -1229,6 +1256,12 @@ class Band:
                 ds_create.GetRasterBand(1).SetNoDataValue(0)
             ds_create.GetRasterBand(1).WriteArray(dt)
             ds_create = None
+            # Build pyramids
+            if overviews:
+                ds = gdal.Open(filename, 1)  # 0 = read-only, 1 = read-write.
+                options = ["COMPRESS_OVERVIEW", "DEFLATE"]
+                ds.BuildOverviews('NEAREST', [4, 8, 16, 32, 64, 128], options=options)
+                ds = None
         else:
             print("filename must have .tif extension")
 
@@ -1309,7 +1342,7 @@ class Composite:
                 f.savefig(filename, dpi=kwargs.get('dpi', 300))
             plt.show()
 
-    def save(self, filename):
+    def save(self, filename, overviews=False):
         """Save RGB composite as RGBA GeoTIFF
 
         Alpha channel is generated from mask of bands.
@@ -1317,10 +1350,17 @@ class Composite:
         Args:
             filename (str): GeoTIFF filename
 
+        Keyword Args:
+            overviews (bool): build overviews when True. Default False
+
         """
         if filename.lower().endswith(".tif"):
             driver_gtiff = gdal.GetDriverByName("GTiff")
-            options = ["PHOTOMETRIC=RGB", "PROFILE=GeoTIFF"]
+            options = [
+                "BIGTIFF=IF_NEEDED", "COMPRESS=DEFLATE", "PROFILE=GeoTIFF",
+                "TILED=YES", "NUM_THREADS=ALL_CPUS",
+                "PHOTOMETRIC=RGB"
+                ]
             ds_create = driver_gtiff.Create(
                 filename,
                 xsize=self.shape[1],
@@ -1344,5 +1384,11 @@ class Composite:
             ds_create.GetRasterBand(4).WriteArray(255 * np.invert(self.r.array.mask))
             ds_create.GetRasterBand(4).SetColorInterpretation(gdal.GCI_AlphaBand)
             ds_create = None
+            # Build pyramids
+            if overviews:
+                ds = gdal.Open(filename, 1)  # 0 = read-only, 1 = read-write.
+                options = ["COMPRESS_OVERVIEW", "DEFLATE"]
+                ds.BuildOverviews('NEAREST', [4, 8, 16, 32, 64, 128], options=options)
+                ds = None
         else:
             print("filename must have .tif extension")
