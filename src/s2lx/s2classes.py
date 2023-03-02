@@ -109,24 +109,24 @@ class SAFE:
         g = sds.GetRasterBand(self.datasets["TCI"]["bands"]["B3"]["n"]).ReadAsArray()
         b = sds.GetRasterBand(self.datasets["TCI"]["bands"]["B2"]["n"]).ReadAsArray()
         tci = np.dstack((r, g, b))
-        transform=sds.GetGeoTransform()
-        projection=sds.GetProjection()
+        transform = sds.GetGeoTransform()
+        projection = sds.GetProjection()
         figsize = kwargs.get("figsize", plt.rcParams["figure.figsize"])
         # plot
         f, ax = plt.subplots(figsize=figsize)
         extent = (
             transform[0],
-            transform[0] + r.shape[1]*transform[1],
-            transform[3] + r.shape[0]*transform[5],
-            transform[3]
-            )
+            transform[0] + r.shape[1] * transform[1],
+            transform[3] + r.shape[0] * transform[5],
+            transform[3],
+        )
         ax.imshow(tci, extent=extent)
         ax.set_title(f"{self.meta['PRODUCT_URI'].split('_')[5]} {pyproj.CRS(projection).name}")
         ax.set_aspect(1)
-        filename = kwargs.get('filename', None)
+        filename = kwargs.get("filename", None)
         f.tight_layout()
         if filename is not None:
-            f.savefig(filename, dpi=kwargs.get('dpi', 300))
+            f.savefig(filename, dpi=kwargs.get("dpi", 300))
         plt.show()
 
     @property
@@ -212,7 +212,7 @@ class SAFE:
                 meta = self.datasets[dataset]["bands"][band]
                 return sds.GetRasterBand(meta["n"]).ReadAsArray(), meta
 
-    def clip_features(self, filename, driverName='GeoJSON', res=20, name="Clip", include8a=False):
+    def clip_features(self, filename, driverName="GeoJSON", res=20, name="Clip", include8a=False):
         """Clip scene to features extent in vector file
 
         Clip all bands in scene by rectangular extent of features
@@ -228,7 +228,7 @@ class SAFE:
 
         Keyword Args:
             driverName (str): format of vector file. Default is 'GeoJSON'
-                For available options see `ogr2ogr --formats` 
+                For available options see `ogr2ogr --formats`
             res (int): resolution of clipped bands. Default 20
             name (str): name of collection. Default is 'Clip'
             include8a (bool): whether to include B8A band. Dafault False
@@ -252,8 +252,8 @@ class SAFE:
             reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
             clip = ops.transform(reproject, clip)
         #
-        #extent = layer.GetExtent()
-        #bounds = (extent[0], extent[2], extent[1], extent[3])
+        # extent = layer.GetExtent()
+        # bounds = (extent[0], extent[2], extent[1], extent[3])
         bounds = clip.bounds
         return self.clip(
             bounds,
@@ -460,7 +460,9 @@ class SAFE:
             print(f"bounds=({minX}, {minY}, {maxX}, {maxY})")
             return self.clip((minX, minY, maxX, maxY), res=20, name=name, include8a=False)
 
-    def warp_features(self, filename, dstcrs=None, driverName='GeoJSON', res=20, name="Clip", include8a=False, crop=False):
+    def warp_features(
+        self, filename, dstcrs=None, driverName="GeoJSON", res=20, name="Clip", include8a=False, crop=False
+    ):
         """Reproject and clip scene to extent of features in vector file
 
         Reproject all bands in scene to target CRS and clip to rectangular region
@@ -508,12 +510,7 @@ class SAFE:
             clip = ops.transform(reproject, clip)
         if crop:
             return self.warp(
-                clip.bounds,
-                dstcrs,
-                name=name,
-                include8a=include8a,
-                cutlineLayer=filename,
-                driverName=driverName
+                clip.bounds, dstcrs, name=name, include8a=include8a, cutlineLayer=filename, driverName=driverName
             )
         else:
             return self.warp(clip.bounds, dstcrs, name=name, include8a=include8a)
@@ -556,16 +553,7 @@ class SAFE:
             shape = ops.transform(reproject, shape)
         return self.warp(shape.bounds, dstcrs, name=name, include8a=include8a)
 
-    def warp(
-        self,
-        bounds,
-        dstcrs,
-        res=20,
-        name="Clip",
-        include8a=False,
-        cutlineLayer=None,
-        driverName='GeoJSON'
-    ):
+    def warp(self, bounds, dstcrs, res=20, name="Clip", include8a=False, cutlineLayer=None, driverName="GeoJSON"):
         """Reproject and clip scene by by coordinates
 
         Reproject all bands in scene to target CRS and clip to rectangular
@@ -767,8 +755,8 @@ class S2:
     """
 
     def __init__(self, *rasters, **kwargs):
-        assert len(set([b.transform for b in rasters])) == 1, 'All bands must have same transform'
-        assert len(set([b.projection for b in rasters])) == 1, 'All bands must have same projection'
+        assert len(set([b.transform for b in rasters])) == 1, "All bands must have same transform"
+        assert len(set([b.projection for b in rasters])) == 1, "All bands must have same projection"
         self._bands = rasters
         self.meta = kwargs.get("meta", {})
         self.name = kwargs.get("name", "S2")
@@ -804,7 +792,11 @@ class S2:
         assert self.transform == other.transform, "transform must be identical"
         assert self.projection == other.projection, "projection must be identical"
 
-        return S2(*(a.patch(b, fit=fit) for (a, b) in zip(self._bands, other._bands)), meta=self.meta, name=f'{self.name}+{other.name}')
+        return S2(
+            *(a.patch(b, fit=fit) for (a, b) in zip(self._bands, other._bands)),
+            meta=self.meta,
+            name=f"{self.name}+{other.name}",
+        )
 
     def restored_pca(self, **kwargs):
         """PCA based filtering
@@ -831,7 +823,7 @@ class S2:
         if remove is None:
             threshold = kwargs.get("threshold", 98)
             last_c = np.where(100 * np.cumsum(pca.explained_variance_ratio_) > threshold)[0][0]
-            print(f'Using {last_c + 1} components')
+            print(f"Using {last_c + 1} components")
             remove = np.arange(0, last_c + 1)
         if isinstance(remove, int):
             remove = (remove,)
@@ -939,7 +931,9 @@ class Band:
         """
         name = kwargs.get("name", self.name)
         array = kwargs.get("array", self.array).copy()
-        assert array.shape == self.array.shape, f'Shape of array {array.shape} must be same as original {self.array.shape}'
+        assert (
+            array.shape == self.array.shape
+        ), f"Shape of array {array.shape} must be same as original {self.array.shape}"
         return Band(name, array, self.transform, self.projection)
 
     def setnorm(self, **kwargs):
@@ -1203,10 +1197,10 @@ class Band:
             f, ax = plt.subplots(figsize=figsize)
         extent = (
             self.transform[0],
-            self.transform[0] + self.shape[1]*self.transform[1],
-            self.transform[3] + self.shape[0]*self.transform[5],
-            self.transform[3]
-            )
+            self.transform[0] + self.shape[1] * self.transform[1],
+            self.transform[3] + self.shape[0] * self.transform[5],
+            self.transform[3],
+        )
         img = ax.imshow(self.array, cmap=cmap, norm=self.norm, extent=extent)
         if showproj:
             ax.set_title(f"{self.name} {pyproj.CRS(self.projection).name}")
@@ -1217,10 +1211,10 @@ class Band:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad=0.05)
             f.colorbar(img, cax=cax, extend="both")
-            filename = kwargs.get('filename', None)
+            filename = kwargs.get("filename", None)
             f.tight_layout()
             if filename is not None:
-                f.savefig(filename, dpi=kwargs.get('dpi', 300))
+                f.savefig(filename, dpi=kwargs.get("dpi", 300))
             plt.show()
 
     def save(self, filename, overviews=False):
@@ -1237,9 +1231,12 @@ class Band:
         if filename.lower().endswith(".tif"):
             driver_gtiff = gdal.GetDriverByName("GTiff")
             options = [
-                "BIGTIFF=IF_NEEDED", "COMPRESS=DEFLATE", "PROFILE=GeoTIFF",
-                "TILED=YES", "NUM_THREADS=ALL_CPUS"
-                ]
+                "BIGTIFF=IF_NEEDED",
+                "COMPRESS=DEFLATE",
+                "PROFILE=GeoTIFF",
+                "TILED=YES",
+                "NUM_THREADS=ALL_CPUS",
+            ]
             ds_create = driver_gtiff.Create(
                 filename,
                 xsize=self.shape[1],
@@ -1260,7 +1257,7 @@ class Band:
             if overviews:
                 ds = gdal.Open(filename, 1)  # 0 = read-only, 1 = read-write.
                 options = ["COMPRESS_OVERVIEW", "DEFLATE"]
-                ds.BuildOverviews('NEAREST', [4, 8, 16, 32, 64, 128], options=options)
+                ds.BuildOverviews("NEAREST", [4, 8, 16, 32, 64, 128], options=options)
                 ds = None
         else:
             print("filename must have .tif extension")
@@ -1325,21 +1322,23 @@ class Composite:
             f, ax = plt.subplots(figsize=figsize)
         extent = (
             self.transform[0],
-            self.transform[0] + self.shape[1]*self.transform[1],
-            self.transform[3] + self.shape[0]*self.transform[5],
-            self.transform[3]
-            )
+            self.transform[0] + self.shape[1] * self.transform[1],
+            self.transform[3] + self.shape[0] * self.transform[5],
+            self.transform[3],
+        )
         ax.imshow(rgb, extent=extent)
         if showproj:
-            ax.set_title(f"{self.name} [{self.r.name} {self.g.name} {self.b.name}] {pyproj.CRS(self.projection).name}")
+            ax.set_title(
+                f"{self.name} [{self.r.name} {self.g.name} {self.b.name}] {pyproj.CRS(self.projection).name}"
+            )
         else:
             ax.set_title(f"{self.name} [{self.r.name} {self.g.name} {self.b.name}]")
         ax.set_aspect(1)
         if "ax" not in kwargs:
-            filename = kwargs.get('filename', None)
+            filename = kwargs.get("filename", None)
             f.tight_layout()
             if filename is not None:
-                f.savefig(filename, dpi=kwargs.get('dpi', 300))
+                f.savefig(filename, dpi=kwargs.get("dpi", 300))
             plt.show()
 
     def save(self, filename, overviews=False):
@@ -1357,10 +1356,13 @@ class Composite:
         if filename.lower().endswith(".tif"):
             driver_gtiff = gdal.GetDriverByName("GTiff")
             options = [
-                "BIGTIFF=IF_NEEDED", "COMPRESS=DEFLATE", "PROFILE=GeoTIFF",
-                "TILED=YES", "NUM_THREADS=ALL_CPUS",
-                "PHOTOMETRIC=RGB"
-                ]
+                "BIGTIFF=IF_NEEDED",
+                "COMPRESS=DEFLATE",
+                "PROFILE=GeoTIFF",
+                "TILED=YES",
+                "NUM_THREADS=ALL_CPUS",
+                "PHOTOMETRIC=RGB",
+            ]
             ds_create = driver_gtiff.Create(
                 filename,
                 xsize=self.shape[1],
@@ -1388,7 +1390,7 @@ class Composite:
             if overviews:
                 ds = gdal.Open(filename, 1)  # 0 = read-only, 1 = read-write.
                 options = ["COMPRESS_OVERVIEW", "DEFLATE"]
-                ds.BuildOverviews('NEAREST', [4, 8, 16, 32, 64, 128], options=options)
+                ds.BuildOverviews("NEAREST", [4, 8, 16, 32, 64, 128], options=options)
                 ds = None
         else:
             print("filename must have .tif extension")
