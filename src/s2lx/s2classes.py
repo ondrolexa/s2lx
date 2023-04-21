@@ -20,6 +20,70 @@ from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.preprocessing import PowerTransformer, RobustScaler, StandardScaler
 
 
+class SAFEStore:
+    """Class to manipulate Sentinel-2 product store
+
+    The SAFEStore is a folder where all SAFE products ares stored.
+
+    Attributes:
+        path (Path): Path to directory
+        SAFES (list): List of all SAFE directories in store
+        tiles (list): List of all tile numbers in store
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+        assert len(self.SAFES) > 0, 'No SAFE found in directory.'
+
+    @property
+    def SAFES(self):
+        return list(self.path.glob('*.SAFE'))
+
+    @property
+    def tiles(self):
+        return [s.stem.split('_')[5] for s in self.SAFES]
+
+    def getsafe(self, tile):
+        candidates = list(self.path.glob(f'*_{tile}_*'))
+        if len(candidates) > 0:
+            return SAFE(list(candidates[0].glob('MTD_*'))[0])
+
+    def searchsafe(self, filename, driverName="GeoJSON"):
+        for safe in self.path.iterdir():
+            s = SAFE(list(safe.glob('MTD_*'))[0])
+            r = s.coverage(filename, driverName=driverName)
+            if r > 0:
+                print(safe.stem.split('_')[5], f'{r:.2%}')
+
+    def warp_patch(
+        self, filename, driverName="GeoJSON", res=20, name="Clip", include8a=False, crop=True, tiles=None
+    ):
+        if tiles is None:
+            rat = []
+            safes = []
+            for safe in self.path.iterdir():
+                s = SAFE(list(safe.glob('MTD_*'))[0])
+                r = s.coverage(filename, driverName=driverName)
+                if r > 0:
+                    rat.append(r)
+                    safes.append(s)
+            ixs = np.argsort(rat)
+        else:
+            safes = [self.getsafe(t) for t in tiles]
+            ixs = list(range(len(safes)))
+            rat = [s.coverage(filename, driverName=driverName) for s in safes]
+        # do
+        print(f'Reading {safes[ixs[0]].tilenumber} [{rat[ixs[0]]:.2%}]...')
+        d = safes[ixs[0]].warp_features(filename, driverName=driverName, res=res, name=name, include8a=include8a, crop=crop)
+        n = 1
+        for ix in ixs[1:]:
+            print(f'{n}/{len(ixs) - 1} Patching {safes[ix].tilenumber} [{rat[ix]:.2%}]...')
+            other = safes[ix].warp_features(filename, driverName=driverName, res=res, name=name, include8a=include8a, crop=crop)
+            d = d.patch(other)
+            n += 1
+        return d
+
+
 class SAFE:
     """Class to manipulate Sentinel-2 product
 
@@ -88,11 +152,17 @@ class SAFE:
     def __repr__(self):
         txt = f'{self.meta["DATATAKE_1_SPACECRAFT_NAME"]} '
         txt += f'{self.meta["PRODUCT_TYPE"]} '
-        txt += f'{self.meta["PROCESSING_LEVEL"]}\n'
+        txt += f'{self.meta["PROCESSING_LEVEL"]} '
+        txt += f'{self.tilenumber}\n'
         txt += f'Sensing date {self.meta["DATATAKE_1_DATATAKE_SENSING_START"]}\n'
         for d in self.datasets:
             txt += f'Dataset {d} bands: {sorted(list(self.datasets[d]["bands"].keys()))}\n'
         return txt
+
+    @property
+    def tilenumber(self):
+        return self.meta['PRODUCT_URI'].split('_')[5]
+    
 
     def preview(self, **kwargs):
         """Show the scene TCI image
@@ -194,6 +264,35 @@ class SAFE:
             reproject = pyproj.Transformer.from_crs(wgs84, dstcrs, always_xy=True).transform
             inter = ops.transform(reproject, inter)
         return inter
+
+    def coverage(self, filename, driverName="GeoJSON"):
+        """Return area fraction of features in filename covered by scene
+
+        Args:
+            filename (str): filename of vector file
+
+        Keyword Args:
+            driverName (str): format of vector file. Default is 'GeoJSON'
+                For available options see `ogr2ogr --formats`
+
+        Returns:
+            float value of coverage (between 0 and 1)
+
+        """
+        driver = ogr.GetDriverByName(driverName)
+        ds = driver.Open(filename, 0)
+        layer = ds.GetLayer()
+        clip = ops.unary_union([wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer])
+        try:
+            crs = pyproj.CRS.from_wkt(layer.GetSpatialRef().ExportToWkt())
+        except pyproj.exceptions.CRSError:
+            crs = pyproj.CRS("EPSG:4326")
+        fp = self.footprint(dstcrs=crs)
+        if clip.intersects(fp):
+            rat = clip.intersection(fp).area / clip.area
+        else:
+            rat = 0
+        return rat
 
     def get(self, dataset, band):
         """Get band as numpy array
@@ -461,7 +560,7 @@ class SAFE:
             return self.clip((minX, minY, maxX, maxY), res=20, name=name, include8a=False)
 
     def warp_features(
-        self, filename, dstcrs=None, driverName="GeoJSON", res=20, name="Clip", include8a=False, crop=False
+        self, filename, dstcrs=None, driverName="GeoJSON", res=20, name="Clip", include8a=False, crop=True
     ):
         """Reproject and clip scene to extent of features in vector file
 

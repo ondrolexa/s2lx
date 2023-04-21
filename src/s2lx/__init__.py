@@ -10,7 +10,7 @@ Todo:
 
 """
 
-from s2lx.s2classes import S2, SAFE, Band, Composite
+from s2lx.s2classes import S2, SAFE, SAFEStore, Band, Composite
 from s2lx.s2filters import *
 
 __version__ = "0.1.0"
