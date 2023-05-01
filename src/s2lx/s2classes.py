@@ -615,7 +615,7 @@ class SAFE:
             return self.warp(clip.bounds, dstcrs, name=name, include8a=include8a)
 
     def warp_shape(self, shape, srccrs=None, dstcrs=None, res=20, name="Clip", include8a=False):
-        """Reproject and clip scene to extent of features in vector file
+        """Reproject and clip scene to extent of shapely polygon
 
         Reproject all bands in scene to target CRS and clip to bounding box of
         shapely polygon. All bands in resulting collection have same resolution.
@@ -623,7 +623,7 @@ class SAFE:
         the bands of '20m' dataset are upsampled.
 
         Args:
-            shape (str): filename of vector file
+            shape (str): shapely polygon
 
         Keyword Args:
             srccrs(str or pyproj.CRS): shape coordinate system. Default
