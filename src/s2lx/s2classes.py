@@ -53,10 +53,16 @@ class SAFEStore:
             s = SAFE(list(safe.glob('MTD_*'))[0])
             r = s.coverage(filename, driverName=driverName)
             if r > 0:
-                print(safe.stem.split('_')[5], f'{r:.2%}')
+                cl = float(s.meta['CLOUD_COVERAGE_ASSESSMENT']) / 100
+                print(safe.stem.split('_')[5],
+                    f'{r:>6.2%}',
+                    s.meta['PRODUCT_START_TIME'],
+                    f'{cl:>7.3%}',
+                    s.meta['PROCESSING_LEVEL'],
+                    s.crs.to_string())
 
     def warp_patch(
-        self, filename, driverName="GeoJSON", res=20, name="Clip", include8a=False, crop=True, tiles=None
+        self, filename, driverName="GeoJSON", res=20, name="Clip", include8a=False, crop=True, tiles=None, fit=False
     ):
         if tiles is None:
             rat = []
@@ -79,7 +85,7 @@ class SAFEStore:
         for ix in ixs[1:]:
             print(f'{n}/{len(ixs) - 1} Patching {safes[ix].tilenumber} [{rat[ix]:.2%}]...')
             other = safes[ix].warp_features(filename, driverName=driverName, res=res, name=name, include8a=include8a, crop=crop)
-            d = d.patch(other)
+            d = d.patch(other, fit=fit)
             n += 1
         return d
 
@@ -976,6 +982,42 @@ class S2:
         )
         return S2(*rasters, meta=meta, name=self.name + " PCA")
 
+    def truecolor(self, name='True Color'):
+        assert 'b4' in self.__dict__, 'Band 4 not present'
+        assert 'b3' in self.__dict__, 'Band 3 not present'
+        assert 'b2' in self.__dict__, 'Band 2 not present'
+        return Composite(self.b4, self.b3, self.b2, name=name)
+
+    def falsecolor(self, name='False Color'):
+        assert 'b12' in self.__dict__, 'Band 12 not present'
+        assert 'b11' in self.__dict__, 'Band 11 not present'
+        assert 'b8' in self.__dict__, 'Band 8 not present'
+        return Composite(self.b12, self.b11, self.b8, name=name)
+
+    def georatio(self, name='GeoRatio'):
+        assert 'b12' in self.__dict__, 'Band 12 not present'
+        assert 'b11' in self.__dict__, 'Band 11 not present'
+        assert 'b8' in self.__dict__, 'Band 8 not present'
+        assert 'b4' in self.__dict__, 'Band 4 not present'
+        assert 'b3' in self.__dict__, 'Band 3 not present'
+        assert 'b2' in self.__dict__, 'Band 2 not present'
+        return Composite(self.b12/self.b4, self.b11/self.b3, self.b8/self.b2, name=name)
+
+    def alteration(self, name='Alterations'):
+        assert 'b12' in self.__dict__, 'Band 12 not present'
+        assert 'b11' in self.__dict__, 'Band 11 not present'
+        assert 'b4' in self.__dict__, 'Band 4 not present'
+        assert 'b2' in self.__dict__, 'Band 2 not present'
+        return Composite(self.b11/self.b12, self.b4/self.b2, self.b4/self.b11, name=name)
+
+    def showpca(self):
+        assert 'evr' in self.meta, 'This is no PCA S2 dataset'
+        f, axs = plt.subplots(3, 3, figsize=(14,9))
+        for b, ax, r in zip(self._bands, axs.flatten(), self.meta['evr']):
+            b.show(ax=ax, showproj=False)
+            ax.set_title(f'{b.name}:{100*r:g}')
+        f.tight_layout()
+        plt.show()
 
 class Band:
     """Class to store band data
