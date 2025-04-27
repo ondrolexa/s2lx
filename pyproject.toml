@@ -14,7 +14,7 @@ dynamic = ["version"]
 description = "Simple Sentinel-2 tools"
 readme = "README.md"
 maintainers = [{ name = "Ondrej Lexa", email = "lexa.ondrej@gmail.com" }]
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 classifiers = [
     "Programming Language :: Python :: 3",
