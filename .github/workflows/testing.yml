@@ -28,7 +28,7 @@ jobs:
           sudo apt-get install libgdal-dev
           python -m pip install --upgrade pip
           python -m pip install .[tests]
-          pip install --no-build-isolation --no-cache-dir --force-reinstall 'gdal[numpy]==$(gdal-config --version)'
+          pip install --no-build-isolation --no-cache-dir --force-reinstall 'gdal[numpy]==3.8.4'
       - name: Test with pytest
         run: |
           python -m pytest
