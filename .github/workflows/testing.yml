@@ -1,34 +1,36 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
-name: Python package
+name: Python testing
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - "**"
   pull_request:
-    branches: ["main"]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
+  tests:
+    runs-on: "ubuntu-latest"
+    name: Testing
+    defaults:
+      run:
+        shell: bash -l {0}
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        name: Checkout repository
+
+      - name: Setup miniconda
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          sudo apt-get install libgdal-dev
-          python -m pip install --upgrade pip
-          python -m pip install .[tests]
-          pip install --no-build-isolation --no-cache-dir --force-reinstall 'gdal[numpy]==3.8.4'
-      - name: Test with pytest
-        run: |
-          python -m pytest
+          auto-update-conda: true
+          miniforge-variant: Miniforge3
+          channels: conda-forge
+          python-version: 3.9
+          activate-environment: s2lx
+          auto-activate-base: false
+          environment-file: environment-gha.yml
+          use-mamba: true
+
+      - name: Lint with flake8
+        run: flake8 . --exit-zero --max-complexity=20 --max-line-length=127 --ignore=E501,W503,C901
+
+      - name: Install test
+        run: pip install .
