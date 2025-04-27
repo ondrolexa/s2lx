@@ -1,20 +1,53 @@
-[tool.black]
-line-length = 115
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
-  # The following are specific to Black, you probably don't want those.
-  | blib2to3
-  | tests/data
-)/
-'''
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "s2lx.__version__" }
+
+[project]
+name = "s2lx"
+dynamic = ["version"]
+description = "Simple Sentinel-2 tools"
+readme = "README.md"
+maintainers = [{ name = "Ondrej Lexa", email = "lexa.ondrej@gmail.com" }]
+requires-python = ">=3.10"
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "scipy",
+    "gdal[numpy]==3.8.4",
+    "shapely",
+    "pyproj",
+    "scikit-image",
+    "scikit-learn",
+]
+## pip install --no-build-isolation --no-cache-dir --force-reinstall 'gdal[numpy]==3.8.4'
+
+[project.optional-dependencies]
+extra = ["jupyterlab"]
+tests = ["pytest", "pytest-cov", "nbval"]
+docs = [
+    "ipykernel",
+    "nbsphinx",
+    "nbsphinx-link",
+    "sphinx",
+    "sphinx_mdinclude",
+    "sphinx_rtd_theme",
+]
+dev = ["s2lx[extra,tests,docs]", "black"]
+
+[tool.black]
+line-length = 88
+extend-exclude = '''.*ui_.*'''
+
+[tool.isort]
+profile = "black"

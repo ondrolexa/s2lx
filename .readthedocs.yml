@@ -1,21 +1,16 @@
 version: 2
-formats: all
-
-conda:
-  environment: environment-rtd.yml
 
 build:
   os: ubuntu-22.04
   tools:
-    python: "mambaforge-4.10"
+    python: "3.11"
 
-# This part is necessary otherwise the project is not built
+sphinx:
+  configuration: docs/source/conf.py
+
+formats: all
+
 python:
   install:
     - method: pip
-      path: .
-
-# Build documentation in the docs/ directory with Sphinx
-sphinx:
-   configuration: docs/source/conf.py
-
+      path: .[docs]

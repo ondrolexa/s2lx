@@ -13,11 +13,14 @@ import pyproj
 from matplotlib import colors, path
 from matplotlib.widgets import RectangleSelector
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from osgeo import gdal, ogr, gdal_array
+from osgeo import gdal, gdal_array, ogr
 from shapely import geometry, ops, wkt
 from sklearn import decomposition
 from sklearn.cluster import AgglomerativeClustering, KMeans
 from sklearn.preprocessing import PowerTransformer, RobustScaler, StandardScaler
+
+gdal.UseExceptions()
+ogr.UseExceptions()
 
 
 class SAFEStore:
@@ -33,42 +36,52 @@ class SAFEStore:
 
     def __init__(self, path):
         self.path = Path(path)
-        assert len(self.SAFES) > 0, 'No SAFE found in directory.'
+        assert len(self.SAFES) > 0, "No SAFE found in directory."
 
     @property
     def SAFES(self):
-        return list(self.path.glob('*.SAFE'))
+        return list(self.path.glob("*.SAFE"))
 
     @property
     def tiles(self):
-        return [s.stem.split('_')[5] for s in self.SAFES]
+        return [s.stem.split("_")[5] for s in self.SAFES]
 
     def getsafe(self, tile):
-        candidates = list(self.path.glob(f'*_{tile}_*'))
+        candidates = list(self.path.glob(f"*_{tile}_*"))
         if len(candidates) > 0:
-            return SAFE(list(candidates[0].glob('MTD_*'))[0])
+            return SAFE(list(candidates[0].glob("MTD_*"))[0])
 
     def searchsafe(self, filename, driverName="GeoJSON"):
         for safe in self.path.iterdir():
-            s = SAFE(list(safe.glob('MTD_*'))[0])
+            s = SAFE(list(safe.glob("MTD_*"))[0])
             r = s.coverage(filename, driverName=driverName)
             if r > 0:
-                cl = float(s.meta['CLOUD_COVERAGE_ASSESSMENT']) / 100
-                print(safe.stem.split('_')[5],
-                    f'{r:>6.2%}',
-                    s.meta['PRODUCT_START_TIME'],
-                    f'{cl:>7.3%}',
-                    s.meta['PROCESSING_LEVEL'],
-                    s.crs.to_string())
+                cl = float(s.meta["CLOUD_COVERAGE_ASSESSMENT"]) / 100
+                print(
+                    safe.stem.split("_")[5],
+                    f"{r:>6.2%}",
+                    s.meta["PRODUCT_START_TIME"],
+                    f"{cl:>7.3%}",
+                    s.meta["PROCESSING_LEVEL"],
+                    s.crs.to_string(),
+                )
 
     def warp_patch(
-        self, filename, driverName="GeoJSON", res=20, name="Clip", include8a=False, crop=True, tiles=None, fit=False
+        self,
+        filename,
+        driverName="GeoJSON",
+        res=20,
+        name="Clip",
+        include8a=False,
+        crop=True,
+        tiles=None,
+        fit=False,
     ):
         if tiles is None:
             rat = []
             safes = []
             for safe in self.path.iterdir():
-                s = SAFE(list(safe.glob('MTD_*'))[0])
+                s = SAFE(list(safe.glob("MTD_*"))[0])
                 r = s.coverage(filename, driverName=driverName)
                 if r > 0:
                     rat.append(r)
@@ -79,12 +92,28 @@ class SAFEStore:
             ixs = list(range(len(safes)))
             rat = [s.coverage(filename, driverName=driverName) for s in safes]
         # do
-        print(f'Reading {safes[ixs[0]].tilenumber} [{rat[ixs[0]]:.2%}]...')
-        d = safes[ixs[0]].warp_features(filename, driverName=driverName, res=res, name=name, include8a=include8a, crop=crop)
+        print(f"Reading {safes[ixs[0]].tilenumber} [{rat[ixs[0]]:.2%}]...")
+        d = safes[ixs[0]].warp_features(
+            filename,
+            driverName=driverName,
+            res=res,
+            name=name,
+            include8a=include8a,
+            crop=crop,
+        )
         n = 1
         for ix in ixs[1:]:
-            print(f'{n}/{len(ixs) - 1} Patching {safes[ix].tilenumber} [{rat[ix]:.2%}]...')
-            other = safes[ix].warp_features(filename, driverName=driverName, res=res, name=name, include8a=include8a, crop=crop)
+            print(
+                f"{n}/{len(ixs) - 1} Patching {safes[ix].tilenumber} [{rat[ix]:.2%}]..."
+            )
+            other = safes[ix].warp_features(
+                filename,
+                driverName=driverName,
+                res=res,
+                name=name,
+                include8a=include8a,
+                crop=crop,
+            )
             d = d.patch(other, fit=fit)
             n += 1
         return d
@@ -159,16 +188,17 @@ class SAFE:
         txt = f'{self.meta["DATATAKE_1_SPACECRAFT_NAME"]} '
         txt += f'{self.meta["PRODUCT_TYPE"]} '
         txt += f'{self.meta["PROCESSING_LEVEL"]} '
-        txt += f'{self.tilenumber}\n'
+        txt += f"{self.tilenumber}\n"
         txt += f'Sensing date {self.meta["DATATAKE_1_DATATAKE_SENSING_START"]}\n'
         for d in self.datasets:
-            txt += f'Dataset {d} bands: {sorted(list(self.datasets[d]["bands"].keys()))}\n'
+            txt += (
+                f'Dataset {d} bands: {sorted(list(self.datasets[d]["bands"].keys()))}\n'
+            )
         return txt
 
     @property
     def tilenumber(self):
-        return self.meta['PRODUCT_URI'].split('_')[5]
-    
+        return self.meta["PRODUCT_URI"].split("_")[5]
 
     def preview(self, **kwargs):
         """Show the scene TCI image
@@ -197,7 +227,9 @@ class SAFE:
             transform[3],
         )
         ax.imshow(tci, extent=extent)
-        ax.set_title(f"{self.meta['PRODUCT_URI'].split('_')[5]} {pyproj.CRS(projection).name}")
+        ax.set_title(
+            f"{self.meta['PRODUCT_URI'].split('_')[5]} {pyproj.CRS(projection).name}"
+        )
         ax.set_aspect(1)
         filename = kwargs.get("filename", None)
         f.tight_layout()
@@ -228,7 +260,9 @@ class SAFE:
             dstcrs = pyproj.CRS(dstcrs)
         fpoly = wkt.loads(self.meta["FOOTPRINT"])
         if dstcrs != wgs84:
-            reproject = pyproj.Transformer.from_crs(wgs84, dstcrs, always_xy=True).transform
+            reproject = pyproj.Transformer.from_crs(
+                wgs84, dstcrs, always_xy=True
+            ).transform
             # safe footprint
             fpoly = ops.transform(reproject, fpoly).buffer(0)
         return fpoly
@@ -267,7 +301,9 @@ class SAFE:
             dstcrs = pyproj.CRS(dstcrs)
         inter = self.footprint(dstcrs=wgs84).intersection(other.footprint(dstcrs=wgs84))
         if wgs84 != dstcrs:
-            reproject = pyproj.Transformer.from_crs(wgs84, dstcrs, always_xy=True).transform
+            reproject = pyproj.Transformer.from_crs(
+                wgs84, dstcrs, always_xy=True
+            ).transform
             inter = ops.transform(reproject, inter)
         return inter
 
@@ -288,7 +324,9 @@ class SAFE:
         driver = ogr.GetDriverByName(driverName)
         ds = driver.Open(filename, 0)
         layer = ds.GetLayer()
-        clip = ops.unary_union([wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer])
+        clip = ops.unary_union(
+            [wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer]
+        )
         try:
             crs = pyproj.CRS.from_wkt(layer.GetSpatialRef().ExportToWkt())
         except pyproj.exceptions.CRSError:
@@ -317,7 +355,9 @@ class SAFE:
                 meta = self.datasets[dataset]["bands"][band]
                 return sds.GetRasterBand(meta["n"]).ReadAsArray(), meta
 
-    def clip_features(self, filename, driverName="GeoJSON", res=20, name="Clip", include8a=False):
+    def clip_features(
+        self, filename, driverName="GeoJSON", res=20, name="Clip", include8a=False
+    ):
         """Clip scene to features extent in vector file
 
         Clip all bands in scene by rectangular extent of features
@@ -352,9 +392,13 @@ class SAFE:
             srccrs = self.crs
         dstcrs = self.crs
         # to do
-        clip = ops.unary_union([wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer])
+        clip = ops.unary_union(
+            [wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer]
+        )
         if srccrs != dstcrs:
-            reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
+            reproject = pyproj.Transformer.from_crs(
+                srccrs, dstcrs, always_xy=True
+            ).transform
             clip = ops.transform(reproject, clip)
         #
         # extent = layer.GetExtent()
@@ -394,7 +438,9 @@ class SAFE:
         else:
             srccrs = pyproj.CRS(srccrs)
         if srccrs != self.crs:
-            reproject = pyproj.Transformer.from_crs(srccrs, self.crs, always_xy=True).transform
+            reproject = pyproj.Transformer.from_crs(
+                srccrs, self.crs, always_xy=True
+            ).transform
             shape = ops.transform(reproject, shape)
         return self.clip(
             shape.bounds,
@@ -536,7 +582,7 @@ class SAFE:
         vmin = np.nanpercentile(dt, 2)
         vmax = np.nanpercentile(dt, 98)
         norm = colors.Normalize(vmin=vmin, vmax=vmax, clip=True)
-        img = ax.imshow(dt, norm=norm, cmap="Greys")
+        ax.imshow(dt, norm=norm, cmap="Greys")
         ax.set_aspect(1)
         ax.set_title("Set clip with mouse and press enter.")
         f.tight_layout()
@@ -563,10 +609,19 @@ class SAFE:
             maxX = minX + xs * sds.RasterXSize
             minY = maxY + ys * sds.RasterYSize
             print(f"bounds=({minX}, {minY}, {maxX}, {maxY})")
-            return self.clip((minX, minY, maxX, maxY), res=20, name=name, include8a=False)
+            return self.clip(
+                (minX, minY, maxX, maxY), res=20, name=name, include8a=False
+            )
 
     def warp_features(
-        self, filename, dstcrs=None, driverName="GeoJSON", res=20, name="Clip", include8a=False, crop=True
+        self,
+        filename,
+        dstcrs=None,
+        driverName="GeoJSON",
+        res=20,
+        name="Clip",
+        include8a=False,
+        crop=True,
     ):
         """Reproject and clip scene to extent of features in vector file
 
@@ -609,18 +664,29 @@ class SAFE:
         else:
             dstcrs = pyproj.CRS(dstcrs)
         # to do
-        clip = ops.unary_union([wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer])
+        clip = ops.unary_union(
+            [wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer]
+        )
         if srccrs != dstcrs:
-            reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
+            reproject = pyproj.Transformer.from_crs(
+                srccrs, dstcrs, always_xy=True
+            ).transform
             clip = ops.transform(reproject, clip)
         if crop:
             return self.warp(
-                clip.bounds, dstcrs, name=name, include8a=include8a, cutlineLayer=filename, driverName=driverName
+                clip.bounds,
+                dstcrs,
+                name=name,
+                include8a=include8a,
+                cutlineLayer=filename,
+                driverName=driverName,
             )
         else:
             return self.warp(clip.bounds, dstcrs, name=name, include8a=include8a)
 
-    def warp_shape(self, shape, srccrs=None, dstcrs=None, res=20, name="Clip", include8a=False):
+    def warp_shape(
+        self, shape, srccrs=None, dstcrs=None, res=20, name="Clip", include8a=False
+    ):
         """Reproject and clip scene to extent of shapely polygon
 
         Reproject all bands in scene to target CRS and clip to bounding box of
@@ -654,11 +720,22 @@ class SAFE:
             dstcrs = pyproj.CRS(dstcrs)
         # to do
         if srccrs != dstcrs:
-            reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
+            reproject = pyproj.Transformer.from_crs(
+                srccrs, dstcrs, always_xy=True
+            ).transform
             shape = ops.transform(reproject, shape)
         return self.warp(shape.bounds, dstcrs, name=name, include8a=include8a)
 
-    def warp(self, bounds, dstcrs, res=20, name="Clip", include8a=False, cutlineLayer=None, driverName="GeoJSON"):
+    def warp(
+        self,
+        bounds,
+        dstcrs,
+        res=20,
+        name="Clip",
+        include8a=False,
+        cutlineLayer=None,
+        driverName="GeoJSON",
+    ):
         """Reproject and clip scene by by coordinates
 
         Reproject all bands in scene to target CRS and clip to rectangular
@@ -750,9 +827,13 @@ class SAFE:
                 srccrs = pyproj.CRS.from_wkt(layer.GetSpatialRef().ExportToWkt())
             except pyproj.exceptions.CRSError:
                 srccrs = self.crs
-            clip = ops.unary_union([wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer])
+            clip = ops.unary_union(
+                [wkt.loads(f.GetGeometryRef().ExportToWkt()).buffer(0) for f in layer]
+            )
             if srccrs != dstcrs:
-                reproject = pyproj.Transformer.from_crs(srccrs, dstcrs, always_xy=True).transform
+                reproject = pyproj.Transformer.from_crs(
+                    srccrs, dstcrs, always_xy=True
+                ).transform
                 clip = ops.transform(reproject, clip)
             clippath = path.Path(np.array(clip.exterior.xy).T)
             mask = np.logical_or(
@@ -860,8 +941,12 @@ class S2:
     """
 
     def __init__(self, *rasters, **kwargs):
-        assert len(set([b.transform for b in rasters])) == 1, "All bands must have same transform"
-        assert len(set([b.projection for b in rasters])) == 1, "All bands must have same projection"
+        assert (
+            len(set([b.transform for b in rasters])) == 1
+        ), "All bands must have same transform"
+        assert (
+            len(set([b.projection for b in rasters])) == 1
+        ), "All bands must have same projection"
         self._bands = rasters
         self.meta = kwargs.get("meta", {})
         self.name = kwargs.get("name", "S2")
@@ -927,7 +1012,9 @@ class S2:
         remove = kwargs.get("remove", None)
         if remove is None:
             threshold = kwargs.get("threshold", 98)
-            last_c = np.where(100 * np.cumsum(pca.explained_variance_ratio_) > threshold)[0][0]
+            last_c = np.where(
+                100 * np.cumsum(pca.explained_variance_ratio_) > threshold
+            )[0][0]
             print(f"Using {last_c + 1} components")
             remove = np.arange(0, last_c + 1)
         if isinstance(remove, int):
@@ -982,42 +1069,47 @@ class S2:
         )
         return S2(*rasters, meta=meta, name=self.name + " PCA")
 
-    def truecolor(self, name='True Color'):
-        assert 'b4' in self.__dict__, 'Band 4 not present'
-        assert 'b3' in self.__dict__, 'Band 3 not present'
-        assert 'b2' in self.__dict__, 'Band 2 not present'
+    def truecolor(self, name="True Color"):
+        assert "b4" in self.__dict__, "Band 4 not present"
+        assert "b3" in self.__dict__, "Band 3 not present"
+        assert "b2" in self.__dict__, "Band 2 not present"
         return Composite(self.b4, self.b3, self.b2, name=name)
 
-    def falsecolor(self, name='False Color'):
-        assert 'b12' in self.__dict__, 'Band 12 not present'
-        assert 'b11' in self.__dict__, 'Band 11 not present'
-        assert 'b8' in self.__dict__, 'Band 8 not present'
+    def falsecolor(self, name="False Color"):
+        assert "b12" in self.__dict__, "Band 12 not present"
+        assert "b11" in self.__dict__, "Band 11 not present"
+        assert "b8" in self.__dict__, "Band 8 not present"
         return Composite(self.b12, self.b11, self.b8, name=name)
 
-    def georatio(self, name='GeoRatio'):
-        assert 'b12' in self.__dict__, 'Band 12 not present'
-        assert 'b11' in self.__dict__, 'Band 11 not present'
-        assert 'b8' in self.__dict__, 'Band 8 not present'
-        assert 'b4' in self.__dict__, 'Band 4 not present'
-        assert 'b3' in self.__dict__, 'Band 3 not present'
-        assert 'b2' in self.__dict__, 'Band 2 not present'
-        return Composite(self.b12/self.b4, self.b11/self.b3, self.b8/self.b2, name=name)
+    def georatio(self, name="GeoRatio"):
+        assert "b12" in self.__dict__, "Band 12 not present"
+        assert "b11" in self.__dict__, "Band 11 not present"
+        assert "b8" in self.__dict__, "Band 8 not present"
+        assert "b4" in self.__dict__, "Band 4 not present"
+        assert "b3" in self.__dict__, "Band 3 not present"
+        assert "b2" in self.__dict__, "Band 2 not present"
+        return Composite(
+            self.b12 / self.b4, self.b11 / self.b3, self.b8 / self.b2, name=name
+        )
 
-    def alteration(self, name='Alterations'):
-        assert 'b12' in self.__dict__, 'Band 12 not present'
-        assert 'b11' in self.__dict__, 'Band 11 not present'
-        assert 'b4' in self.__dict__, 'Band 4 not present'
-        assert 'b2' in self.__dict__, 'Band 2 not present'
-        return Composite(self.b11/self.b12, self.b4/self.b2, self.b4/self.b11, name=name)
+    def alteration(self, name="Alterations"):
+        assert "b12" in self.__dict__, "Band 12 not present"
+        assert "b11" in self.__dict__, "Band 11 not present"
+        assert "b4" in self.__dict__, "Band 4 not present"
+        assert "b2" in self.__dict__, "Band 2 not present"
+        return Composite(
+            self.b11 / self.b12, self.b4 / self.b2, self.b4 / self.b11, name=name
+        )
 
     def showpca(self):
-        assert 'evr' in self.meta, 'This is no PCA S2 dataset'
-        f, axs = plt.subplots(3, 3, figsize=(14,9))
-        for b, ax, r in zip(self._bands, axs.flatten(), self.meta['evr']):
+        assert "evr" in self.meta, "This is no PCA S2 dataset"
+        f, axs = plt.subplots(3, 3, figsize=(14, 9))
+        for b, ax, r in zip(self._bands, axs.flatten(), self.meta["evr"]):
             b.show(ax=ax, showproj=False)
-            ax.set_title(f'{b.name}:{100*r:g}')
+            ax.set_title(f"{b.name}:{100 * r:g}")
         f.tight_layout()
         plt.show()
+
 
 class Band:
     """Class to store band data
@@ -1057,7 +1149,9 @@ class Band:
 
     def __repr__(self):
         txt = f"Band {self.name} {self.shape} {self.dtype}\n"
-        txt += f"Min:{self.min:g} Max:{self.max:g} Vmin:{self.vmin:g} Vmax:{self.vmax:g}"
+        txt += (
+            f"Min:{self.min:g} Max:{self.max:g} Vmin:{self.vmin:g} Vmax:{self.vmax:g}"
+        )
         return txt
 
     def copy(self, **kwargs):
@@ -1103,7 +1197,9 @@ class Band:
 
     def __add__(self, other):
         if isinstance(other, Band):
-            return self.copy(array=self.array + other.array, name=f"{self.name}+{other.name}")
+            return self.copy(
+                array=self.array + other.array, name=f"{self.name}+{other.name}"
+            )
         elif isinstance(other, numbers.Number):
             return self.copy(array=self.array + other, name=f"{self.name}+{other}")
         else:
@@ -1111,7 +1207,9 @@ class Band:
 
     def __radd__(self, other):
         if isinstance(other, Band):
-            return self.copy(array=self.array + other.array, name=f"{other.name}+{self.name}")
+            return self.copy(
+                array=self.array + other.array, name=f"{other.name}+{self.name}"
+            )
         elif isinstance(other, numbers.Number):
             return self.copy(array=self.array + other, name=f"{other}+{self.name}")
         else:
@@ -1119,7 +1217,9 @@ class Band:
 
     def __sub__(self, other):
         if isinstance(other, Band):
-            return self.copy(array=self.array - other.array, name=f"{self.name}-{other.name}")
+            return self.copy(
+                array=self.array - other.array, name=f"{self.name}-{other.name}"
+            )
         elif isinstance(other, numbers.Number):
             return self.copy(array=self.array - other, name=f"{self.name}-{other}")
         else:
@@ -1127,7 +1227,9 @@ class Band:
 
     def __rsub__(self, other):
         if isinstance(other, Band):
-            return self.copy(array=other.array - self.array, name=f"{other.name}-{self.name}")
+            return self.copy(
+                array=other.array - self.array, name=f"{other.name}-{self.name}"
+            )
         elif isinstance(other, numbers.Number):
             return self.copy(array=other - self.array, name=f"{other}-{self.name}")
         else:
