@@ -9,6 +9,7 @@ dependencies:
   - matplotlib
   - scipy
   - gdal
+  - libgdal-jp2openjpeg
   - shapely>=2
   - pyproj
   - mercantile
