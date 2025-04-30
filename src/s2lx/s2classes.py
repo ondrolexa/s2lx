@@ -158,7 +158,7 @@ class SAFE:
             self.datasets = {}
             self.meta = ds.GetMetadata()
             for xmlfile, desc in ds.GetSubDatasets():
-                dsname, crs = xmlfile.split(":")[2:]
+                dsname, crs = xmlfile.split(".xml:")[1].split(":")
                 crs = crs.replace("_", ":")
                 sds = gdal.Open(xmlfile, gdal.GA_ReadOnly)
                 meta = sds.GetMetadata()

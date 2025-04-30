@@ -1,7 +1,7 @@
 # s2lx - simple Sentinel-2 tools
 
-[![main](https://github.com/ondrolexa/s2lx/actions/workflows/master.yml/badge.svg)](https://github.com/ondrolexa/s2lx/actions/workflows/master.yml)
-[![Documentation](https://readthedocs.org/projects/apsg/badge/?version=stable)](https://apsg.readthedocs.io/en/stable/?badge=stable)
+[![main](https://github.com/ondrolexa/s2lx/actions/workflows/testing.yml/badge.svg)](https://github.com/ondrolexa/s2lx/actions/workflows/testing.yml)
+[![Documentation](https://readthedocs.org/projects/apsg/badge/?version=latest)](https://apsg.readthedocs.io/en/stable/?badge=latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/ondrolexa/s2lx/blob/master/LICENSE)
 
 ## What is s2lx
